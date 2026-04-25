@@ -5,7 +5,16 @@ from pathlib import Path
 import typer
 
 from ares import APP_NAME, __version__
-from ares.config.loader import apply_llm_profile, load_config, reset_llm_config, save_llm_config, save_ui_config
+from ares.config.loader import (
+    apply_llm_profile,
+    gateway_mode_defaults,
+    load_config,
+    reset_llm_config,
+    resolve_gateway_mode,
+    save_gateway_config,
+    save_llm_config,
+    save_ui_config,
+)
 from ares.gateway import AresGateway, start_gateway_server
 from ares.run import (
     build_doctor_snapshot,
@@ -81,6 +90,41 @@ def theme(
     typer.echo(f"theme: {load_config(cfg.home).ui.theme}")
 
 
+def format_gateway_snapshot(mode: str, host: str, port: int, exposure: str) -> str:
+    return "\n".join(
+        [
+            "Gateway",
+            "=======",
+            f"mode: {mode}",
+            f"host: {host}",
+            f"port: {port}",
+            f"bind: http://{host}:{port}",
+            f"exposure: {exposure}",
+        ]
+    )
+
+
+@app.command("gateway-config")
+def gateway_config(
+    mode: str | None = typer.Option(None, "--mode", help="Persist gateway mode: loopback, lan, or exposed."),
+    host: str | None = typer.Option(None, "--host", help="Persist a custom HTTP bind address."),
+    port: int | None = typer.Option(None, "--port", help="Persist the HTTP bind port."),
+) -> None:
+    """Show or update the persisted gateway bind/exposure settings."""
+    cfg = load_config()
+    if any(value is not None for value in (mode, host, port)):
+        save_gateway_config(home=cfg.home, mode=mode, host=host, port=port)
+    updated = load_config(cfg.home)
+    typer.echo(
+        format_gateway_snapshot(
+            updated.gateway.mode,
+            updated.gateway.host,
+            updated.gateway.port,
+            updated.gateway.exposure,
+        )
+    )
+
+
 @app.command("tools")
 def tools() -> None:
     """List model-visible registered tools."""
@@ -149,14 +193,17 @@ def run(
 def gateway(
     host: str | None = typer.Option(None, "--host", help="HTTP bind address for the control plane."),
     port: int | None = typer.Option(None, "--port", help="HTTP bind port for the control plane."),
+    mode: str | None = typer.Option(None, "--mode", help="Bind preset: loopback, lan, or exposed."),
 ) -> None:
     """Run the lightweight HTTP gateway/control plane."""
     cfg = load_config()
-    bind_host = host or cfg.gateway.host
+    bind_mode = resolve_gateway_mode(mode or cfg.gateway.mode)
+    bind_defaults = gateway_mode_defaults(bind_mode)
+    bind_host = host or (bind_defaults["host"] if mode is not None else cfg.gateway.host)
     bind_port = port or cfg.gateway.port
     gateway_instance = AresGateway(config=cfg)
     server = start_gateway_server(gateway_instance, host=bind_host, port=bind_port)
-    typer.echo(f"gateway listening on http://{bind_host}:{bind_port}")
+    typer.echo(format_gateway_snapshot(bind_mode, bind_host, bind_port, bind_defaults["exposure"]))
     try:
         server.serve_forever()
     finally:

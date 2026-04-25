@@ -16,8 +16,15 @@ DEFAULT_LLM_MODEL = "local-model"
 DEFAULT_OPENAI_BASE_URL = "http://127.0.0.1:1234/v1"
 DEFAULT_HOME = "~/.ares"
 DEFAULT_MODE = "safe-active"
+DEFAULT_GATEWAY_MODE = "loopback"
 DEFAULT_GATEWAY_HOST = "127.0.0.1"
 DEFAULT_GATEWAY_PORT = 18791
+
+GATEWAY_MODE_PRESETS: dict[str, dict[str, str]] = {
+    "loopback": {"host": "127.0.0.1", "exposure": "loopback"},
+    "lan": {"host": "0.0.0.0", "exposure": "lan"},
+    "exposed": {"host": "0.0.0.0", "exposure": "direct"},
+}
 
 LLM_PROFILE_PRESETS: dict[str, dict[str, str]] = {
     "local": {
@@ -71,8 +78,10 @@ class HooksConfig:
 
 @dataclass(frozen=True)
 class GatewayConfig:
+    mode: str = DEFAULT_GATEWAY_MODE
     host: str = DEFAULT_GATEWAY_HOST
     port: int = DEFAULT_GATEWAY_PORT
+    exposure: str = "loopback"
 
 
 @dataclass(frozen=True)
@@ -223,6 +232,17 @@ def _normalize_strings(values: Any) -> tuple[str, ...]:
     return tuple(normalized)
 
 
+def resolve_gateway_mode(mode: str | None) -> str:
+    normalized = str(mode or "").strip().lower() or DEFAULT_GATEWAY_MODE
+    if normalized not in GATEWAY_MODE_PRESETS:
+        raise ValueError(f"unknown gateway mode: {mode}")
+    return normalized
+
+
+def gateway_mode_defaults(mode: str | None) -> dict[str, str]:
+    return dict(GATEWAY_MODE_PRESETS[resolve_gateway_mode(mode)])
+
+
 def save_llm_config(
     *,
     home: Path | str | None = None,
@@ -304,6 +324,30 @@ def save_ui_config(*, home: Path | str | None = None, theme: str | None = None) 
     return _write_config_document(document, home=home)
 
 
+def save_gateway_config(
+    *,
+    home: Path | str | None = None,
+    mode: str | None = None,
+    host: str | None = None,
+    port: int | None = None,
+) -> Path:
+    document = _load_config_document(home)
+    gateway = document.get("gateway")
+    if not isinstance(gateway, dict):
+        gateway = {}
+    if mode is not None:
+        gateway["mode"] = resolve_gateway_mode(mode)
+    effective_mode = resolve_gateway_mode(gateway.get("mode", DEFAULT_GATEWAY_MODE))
+    if host is not None:
+        gateway["host"] = host.strip()
+    elif mode is not None:
+        gateway["host"] = gateway_mode_defaults(effective_mode)["host"]
+    if port is not None:
+        gateway["port"] = int(port)
+    document["gateway"] = gateway
+    return _write_config_document(document, home=home)
+
+
 def _load_agent_profiles(document: dict[str, Any]) -> AgentsConfig:
     raw_agents = document.get("agents") if isinstance(document.get("agents"), dict) else {}
     raw_profiles = raw_agents.get("profiles") if isinstance(raw_agents.get("profiles"), dict) else {}
@@ -376,9 +420,13 @@ def load_config(home: Path | str | None = None) -> AppConfig:
     )
     ui = UIConfig(theme=normalize_theme(os.getenv("ARES_UI_THEME", str(persisted_ui.get("theme", DEFAULT_THEME)))))
     hooks = HooksConfig(auto_report_on_finish=_env_bool("ARES_AUTO_REPORT_ON_FINISH", bool(persisted_hooks.get("auto_report_on_finish", False))))
+    gateway_mode = resolve_gateway_mode(os.getenv("ARES_GATEWAY_MODE", str(persisted_gateway.get("mode", DEFAULT_GATEWAY_MODE))))
+    gateway_defaults = gateway_mode_defaults(gateway_mode)
     gateway = GatewayConfig(
-        host=str(persisted_gateway.get("host", DEFAULT_GATEWAY_HOST)),
-        port=int(persisted_gateway.get("port", DEFAULT_GATEWAY_PORT)),
+        mode=gateway_mode,
+        host=os.getenv("ARES_GATEWAY_HOST", str(persisted_gateway.get("host", gateway_defaults["host"]))),
+        port=int(os.getenv("ARES_GATEWAY_PORT", str(persisted_gateway.get("port", DEFAULT_GATEWAY_PORT)))),
+        exposure=str(gateway_defaults["exposure"]),
     )
     agents = _load_agent_profiles(document)
     return AppConfig(home=resolved_home, llm=llm, policy=policy, ui=ui, hooks=hooks, gateway=gateway, agents=agents)
