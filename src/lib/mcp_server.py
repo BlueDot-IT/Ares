@@ -425,7 +425,7 @@ def _handle_request(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "protocolVersion": params.get("protocolVersion") or "2024-11-05",
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "ares-lib-mcp", "version": "0.1.0"},
+            "serverInfo": {"name": "ares-lib-mcp", "version": "0.1.0a0"},
         }
     if method == "ping":
         return {}

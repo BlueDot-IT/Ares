@@ -12,7 +12,7 @@ Concretely, the current system already includes:
 
 That is the intended shape of Ares: the best operational ideas from Hermes and OpenClaw, narrowed onto authorized pentesting rather than general-purpose agent work.
 
-Release status: `0.1.0-alpha`. This release is intended for controlled lab use and explicitly authorized testing. It is an alpha foundation for that direction, not yet a finished production pentest platform.
+Release status: `0.1.0a0` with git tag `v0.1.0-alpha`. This release is intended for controlled lab use and explicitly authorized testing. It is an alpha foundation for that direction, not yet a finished production pentest platform.
 
 Repository layout:
 
@@ -199,4 +199,4 @@ python -m py_compile src/ares/*.py src/ares/agent/*.py src/ares/config/*.py src/
 
 Ares should still be treated as a controlled-lab alpha. Keep human oversight in place, keep scopes explicit, and keep exploit and post-exploitation approvals outside the model.
 
-The `0.1.0` line is suitable for alpha releases, internal testing, and reproducible packaged builds. The intended direction is to make Ares the strongest blend of Hermes-style agent execution and OpenClaw-style operator control for authorized pentesting, but this release should still be described as an early alpha rather than a finished general-purpose platform.
+The `0.1.0a0` line is suitable for alpha releases, internal testing, and reproducible packaged builds. The intended direction is to make Ares the strongest blend of Hermes-style agent execution and OpenClaw-style operator control for authorized pentesting, but this release should still be described as an early alpha rather than a finished general-purpose platform.
