@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 from ares.config.loader import AppConfig, GatewayConfig, load_config
 from ares.run import run_once
+from ares.webui import build_web_ui_css, build_web_ui_html, build_web_ui_js
 
 
 @dataclass
@@ -199,6 +200,15 @@ def start_gateway_server(gateway: AresGateway, *, host: str = "127.0.0.1", port:
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if parsed.path == "/":
+                self._send_text(build_web_ui_html(), content_type="text/html; charset=utf-8")
+                return
+            if parsed.path == "/app.js":
+                self._send_text(build_web_ui_js(), content_type="application/javascript; charset=utf-8")
+                return
+            if parsed.path == "/app.css":
+                self._send_text(build_web_ui_css(), content_type="text/css; charset=utf-8")
+                return
             if parsed.path == "/health":
                 self._send_json({"status": "ok", "runs": len(gateway.list_runs())})
                 return
@@ -243,6 +253,14 @@ def start_gateway_server(gateway: AresGateway, *, host: str = "127.0.0.1", port:
             encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def _send_text(self, payload: str, *, content_type: str, status: int = 200) -> None:
+            encoded = payload.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             self.wfile.write(encoded)
