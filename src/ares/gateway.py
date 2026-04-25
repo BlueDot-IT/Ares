@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import threading
 import time
@@ -9,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from ares.config.loader import AppConfig, GatewayConfig, load_config
+from ares.config.loader import AppConfig, GatewayConfig, load_config, resolve_gateway_mode
 from ares.run import run_once
 from ares.webui import build_web_ui_css, build_web_ui_html, build_web_ui_js
 
@@ -194,11 +195,36 @@ class AresGateway:
             self._events.append(payload)
 
 
-def start_gateway_server(gateway: AresGateway, *, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
+def gateway_mode_allows_client(mode: str | None, client_host: str | None) -> bool:
+    normalized_mode = resolve_gateway_mode(mode)
+    try:
+        address = ipaddress.ip_address(str(client_host or "").strip())
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    if normalized_mode == "exposed":
+        return True
+    if normalized_mode == "loopback":
+        return address.is_loopback
+    return address.is_loopback or address.is_private or address.is_link_local
+
+
+def start_gateway_server(
+    gateway: AresGateway,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    mode: str = "loopback",
+) -> ThreadingHTTPServer:
+    access_mode = resolve_gateway_mode(mode)
     class GatewayHandler(BaseHTTPRequestHandler):
         server_version = "AresGateway/0.1"
 
         def do_GET(self) -> None:  # noqa: N802
+            if not self._client_allowed():
+                self._reject_forbidden_client()
+                return
             parsed = urlparse(self.path)
             if parsed.path == "/":
                 self._send_text(build_web_ui_html(), content_type="text/html; charset=utf-8")
@@ -230,6 +256,9 @@ def start_gateway_server(gateway: AresGateway, *, host: str = "127.0.0.1", port:
             self._send_json({"error": "not_found"}, status=404)
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._client_allowed():
+                self._reject_forbidden_client()
+                return
             parsed = urlparse(self.path)
             if parsed.path != "/api/runs":
                 self._send_json({"error": "not_found"}, status=404)
@@ -257,6 +286,19 @@ def start_gateway_server(gateway: AresGateway, *, host: str = "127.0.0.1", port:
             self.end_headers()
             self.wfile.write(encoded)
 
+        def _client_allowed(self) -> bool:
+            return gateway_mode_allows_client(access_mode, self.client_address[0] if self.client_address else None)
+
+        def _reject_forbidden_client(self) -> None:
+            self._send_json(
+                {
+                    "error": "forbidden",
+                    "mode": access_mode,
+                    "detail": f"gateway mode {access_mode} does not allow client {self.client_address[0]}",
+                },
+                status=403,
+            )
+
         def _send_text(self, payload: str, *, content_type: str, status: int = 200) -> None:
             encoded = payload.encode("utf-8")
             self.send_response(status)
@@ -272,6 +314,11 @@ def serve_gateway(*, config: AppConfig | None = None, gateway: AresGateway | Non
     config = config or load_config()
     gateway = gateway or AresGateway(config=config)
     gateway_config: GatewayConfig = config.gateway
-    server = start_gateway_server(gateway, host=gateway_config.host, port=gateway_config.port)
+    server = start_gateway_server(
+        gateway,
+        host=gateway_config.host,
+        port=gateway_config.port,
+        mode=gateway_config.mode,
+    )
     server.serve_forever()
     return server

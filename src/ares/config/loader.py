@@ -21,9 +21,9 @@ DEFAULT_GATEWAY_HOST = "127.0.0.1"
 DEFAULT_GATEWAY_PORT = 18791
 
 GATEWAY_MODE_PRESETS: dict[str, dict[str, str]] = {
-    "loopback": {"host": "127.0.0.1", "exposure": "loopback"},
-    "lan": {"host": "0.0.0.0", "exposure": "lan"},
-    "exposed": {"host": "0.0.0.0", "exposure": "direct"},
+    "loopback": {"host": "127.0.0.1", "exposure": "loopback-only"},
+    "lan": {"host": "0.0.0.0", "exposure": "lan-only"},
+    "exposed": {"host": "0.0.0.0", "exposure": "remote"},
 }
 
 LLM_PROFILE_PRESETS: dict[str, dict[str, str]] = {
@@ -81,7 +81,7 @@ class GatewayConfig:
     mode: str = DEFAULT_GATEWAY_MODE
     host: str = DEFAULT_GATEWAY_HOST
     port: int = DEFAULT_GATEWAY_PORT
-    exposure: str = "loopback"
+    exposure: str = "loopback-only"
 
 
 @dataclass(frozen=True)

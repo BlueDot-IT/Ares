@@ -155,7 +155,7 @@ class AresTuiTests(unittest.TestCase):
 
         self.assertIn("ARES", shell)
         self.assertIn("target: corp.example", shell)
-        self.assertIn("theme: midnight", shell)
+        self.assertIn("theme: ember", shell)
         self.assertIn("session: 12", shell)
         self.assertIn("job: running", shell)
         self.assertIn("yolo: ON", shell)
@@ -163,7 +163,7 @@ class AresTuiTests(unittest.TestCase):
         self.assertIn("ares     > Starting reconnaissance against the authorized target.", shell)
         self.assertIn("tool     > nmap_basic {\"target\": \"corp.example\"}", shell)
         self.assertIn("result   > 443/tcp open https", shell)
-        self.assertIn("prompt   > /tools", shell)
+        self.assertIn("ember    > /tools", shell)
         self.assertNotIn("OPERATOR CONSOLE", shell)
 
     def test_build_operator_shell_text_can_render_alternate_theme_chrome(self):

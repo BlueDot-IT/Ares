@@ -81,6 +81,26 @@ class ModelConfigTests(unittest.TestCase):
                 else:
                     os.environ[key] = value
 
+    def test_load_config_defaults_ui_theme_to_ember(self):
+        from ares.config.loader import load_config
+
+        keys = ["ARES_HOME", "ARES_UI_THEME"]
+        old_values = {key: os.environ.get(key) for key in keys}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["ARES_HOME"] = tmp
+                os.environ.pop("ARES_UI_THEME", None)
+
+                cfg = load_config()
+
+                self.assertEqual(cfg.ui.theme, "ember")
+        finally:
+            for key, value in old_values.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     def test_named_model_profiles_and_ui_theme_persist_in_config(self):
         from ares.config.loader import apply_llm_profile, load_config, save_ui_config
 

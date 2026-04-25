@@ -202,7 +202,7 @@ def gateway(
     bind_host = host or (bind_defaults["host"] if mode is not None else cfg.gateway.host)
     bind_port = port or cfg.gateway.port
     gateway_instance = AresGateway(config=cfg)
-    server = start_gateway_server(gateway_instance, host=bind_host, port=bind_port)
+    server = start_gateway_server(gateway_instance, host=bind_host, port=bind_port, mode=bind_mode)
     typer.echo(format_gateway_snapshot(bind_mode, bind_host, bind_port, bind_defaults["exposure"]))
     try:
         server.serve_forever()

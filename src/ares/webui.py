@@ -10,7 +10,7 @@ def build_web_ui_html() -> str:
   <title>Ares Web UI</title>
   <link rel="stylesheet" href="/app.css">
 </head>
-<body>
+<body data-theme="ember">
   <div id="app-shell">
     <header class="hero panel">
       <div>
@@ -71,8 +71,8 @@ def build_web_ui_css() -> str:
     return """html, body {
   margin: 0;
   padding: 0;
-  background: #0b1020;
-  color: #dbe7ff;
+  background: #160d09;
+  color: #f4e6d8;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;
 }
 
@@ -98,10 +98,10 @@ body {
 }
 
 .panel {
-  background: #11182d;
-  border: 1px solid #26314f;
+  background: #24140f;
+  border: 1px solid #5e2f1a;
   border-radius: 16px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.32);
   padding: 16px;
 }
 
@@ -119,23 +119,23 @@ body {
 }
 
 .eyebrow {
-  color: #7dd3fc;
+  color: #ffb36b;
   font-size: 12px;
   letter-spacing: 0.14em;
 }
 
 .subtitle {
   margin: 8px 0 0;
-  color: #9fb2d9;
+  color: #d7b08d;
 }
 
 .badge {
   align-self: center;
   padding: 8px 12px;
   border-radius: 999px;
-  border: 1px solid #31507f;
-  background: #0f1730;
-  color: #9ad8ff;
+  border: 1px solid #a14b1e;
+  background: #2b1710;
+  color: #ffd4a6;
   font-size: 13px;
 }
 
@@ -145,8 +145,8 @@ body {
   overflow: auto;
   padding: 12px;
   border-radius: 12px;
-  background: #0f1730;
-  border: 1px solid #223250;
+  background: #1d110d;
+  border: 1px solid #4d2817;
   white-space: pre-wrap;
   font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace;
   font-size: 13px;
@@ -154,7 +154,7 @@ body {
 }
 
 .empty {
-  color: #7285aa;
+  color: #a98b74;
 }
 
 .run-form {
@@ -168,7 +168,7 @@ body {
   flex-direction: column;
   gap: 8px;
   font-size: 14px;
-  color: #c7d6f8;
+  color: #efdac7;
 }
 
 .run-form .wide {
@@ -189,17 +189,17 @@ input, textarea {
   width: 100%;
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid #31405f;
-  background: #0c1328;
-  color: #e5edff;
+  border: 1px solid #744023;
+  background: #140c09;
+  color: #fff0e1;
 }
 
 button {
   width: fit-content;
   padding: 10px 16px;
   border-radius: 10px;
-  border: 1px solid #2b7fff;
-  background: linear-gradient(180deg, #2874ff, #1e56c8);
+  border: 1px solid #ff8a3c;
+  background: linear-gradient(180deg, #ff8a3c, #b74b1e);
   color: white;
   cursor: pointer;
 }
@@ -207,8 +207,8 @@ button {
 .run-card {
   padding: 10px;
   border-radius: 10px;
-  border: 1px solid #2a3958;
-  background: #101831;
+  border: 1px solid #5b311b;
+  background: #271712;
   margin-bottom: 10px;
 }
 
@@ -216,11 +216,11 @@ button {
   color: #ffffff;
 }
 
-.event-line.tool_call { color: #ffd37d; }
-.event-line.tool_result { color: #8df2b8; }
-.event-line.session_failed { color: #f5a3a3; }
+.event-line.tool_call { color: #ffd07a; }
+.event-line.tool_result { color: #93f0ae; }
+.event-line.session_failed { color: #ffb0a1; }
 .event-line.final_response,
-.event-line.session_finished { color: #9ad8ff; }
+.event-line.session_finished { color: #ffb36b; }
 
 @media (max-width: 1100px) {
   .grid {

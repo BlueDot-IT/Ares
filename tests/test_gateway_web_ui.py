@@ -41,7 +41,7 @@ class GatewayWebUiTests(unittest.TestCase):
         self.assertEqual(app_js.headers.get_content_type(), "application/javascript")
         self.assertEqual(app_css.headers.get_content_type(), "text/css")
         self.assertIn("<title>Ares Web UI</title>", html)
-        self.assertIn('id="app-shell"', html)
+        self.assertIn('<body data-theme="ember">', html)
         self.assertIn('id="run-form"', html)
         self.assertIn('id="runs-panel"', html)
         self.assertIn('id="events-panel"', html)
@@ -50,7 +50,7 @@ class GatewayWebUiTests(unittest.TestCase):
         self.assertIn("/api/events", js)
         self.assertIn("submitRun", js)
         self.assertIn("refreshRuns", js)
-        self.assertIn("background: #0b1020", css)
+        self.assertIn("background: #160d09", css)
         self.assertIn(".panel", css)
 
     def test_web_ui_shell_preserves_existing_run_submission_api(self):

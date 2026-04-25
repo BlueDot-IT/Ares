@@ -29,7 +29,7 @@ from ares.run import (
     write_session_report,
 )
 from ares.state.db import StateDB
-from ares.themes import build_theme_preview_text, get_theme, list_theme_names
+from ares.themes import DEFAULT_THEME, build_theme_preview_text, get_theme, list_theme_names
 from ares.tools.registry import ToolRegistry
 
 
@@ -256,7 +256,7 @@ def build_operator_shell_text(
     background_job: BackgroundRunJob | None,
     width: int = 100,
     yolo_mode: bool = False,
-    theme_name: str = "midnight",
+    theme_name: str = DEFAULT_THEME,
 ) -> str:
     width = _fit_width(width)
     session_label = str(selected_session_id) if selected_session_id is not None else "-"
@@ -331,7 +331,7 @@ def build_screen_frame(
         background_job=background_job,
         width=width,
         yolo_mode=bool(background_job.approve_dangerous) if background_job is not None else False,
-        theme_name="midnight",
+        theme_name=config.ui.theme,
     )
 
 

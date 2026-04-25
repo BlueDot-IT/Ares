@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-DEFAULT_THEME = "midnight"
+DEFAULT_THEME = "ember"
 
 
 @dataclass(frozen=True)

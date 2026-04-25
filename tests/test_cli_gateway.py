@@ -39,6 +39,7 @@ class AresCliGatewayTests(unittest.TestCase):
             self.assertIn("host: 0.0.0.0", updated)
             self.assertIn("port: 19991", updated)
             self.assertIn("bind: http://0.0.0.0:19991", updated)
+            self.assertIn("exposure: lan-only", updated)
 
             saved = json.loads((Path(tmp) / "config.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["gateway"]["mode"], "lan")
@@ -62,7 +63,7 @@ class AresCliGatewayTests(unittest.TestCase):
             )
             self.assertIn("mode: exposed", updated)
             self.assertIn("host: 10.10.10.5", updated)
-            self.assertIn("exposure: direct", updated)
+            self.assertIn("exposure: remote", updated)
 
             saved = json.loads((Path(tmp) / "config.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["gateway"]["mode"], "exposed")
