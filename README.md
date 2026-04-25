@@ -1,8 +1,14 @@
 # Ares
 
-Ares is a Hermes-style autonomous penetration testing runtime for authorized engagements.
+Ares is an autonomous pentesting runtime for authorized engagements that aims to combine the best parts of Hermes and OpenClaw.
 
-Release status: `0.1.0-alpha`. This release is intended for controlled lab use and explicitly authorized testing, not as a production pentest replacement.
+In practical terms, Ares is positioned as:
+
+- a Hermes-like agent runtime for provider-flexible tool use, policy-aware execution, and repeatable operator workflows
+- an OpenClaw-like operator surface for controlled runs, session visibility, event streaming, routing, and operational oversight
+- a pentest-specific shell around both, with ROE-aware controls, evidence capture, reporting, and explicit approval boundaries
+
+Release status: `0.1.0-alpha`. This release is intended for controlled lab use and explicitly authorized testing. It is an alpha foundation for the "best of Hermes + OpenClaw for pentesting" direction, not yet a finished production pentest platform.
 
 Repository layout:
 
@@ -187,4 +193,6 @@ python -m py_compile src/ares/*.py src/ares/agent/*.py src/ares/config/*.py src/
 
 ## Release guidance
 
-Ares should still be treated as a controlled-lab alpha. Keep human oversight in place, keep scopes explicit, and keep exploit and post-exploitation approvals outside the model. The `0.1.0` line is suitable for alpha releases, internal testing, and reproducible packaged builds, but it is not positioned as a general-purpose production pentest platform.
+Ares should still be treated as a controlled-lab alpha. Keep human oversight in place, keep scopes explicit, and keep exploit and post-exploitation approvals outside the model.
+
+The `0.1.0` line is suitable for alpha releases, internal testing, and reproducible packaged builds. The intended direction is to make Ares the strongest blend of Hermes-style agent execution and OpenClaw-style operator control for authorized pentesting, but this release should still be described as an early alpha rather than a finished general-purpose platform.
