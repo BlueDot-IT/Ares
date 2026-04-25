@@ -19,7 +19,7 @@ if str(SRC_DIR) not in sys.path:
 from lib.orchestrator import Orchestrator  # noqa: E402
 from lib.ghostmcp_runner import GhostMCPToolRunner  # noqa: E402
 
-app = typer.Typer(help="Pentest Agent (CLI) — orchestrate GhostMCP tools via LLM planning")
+app = typer.Typer(help="Ares (legacy CLI) — orchestrate GhostMCP tools via LLM planning")
 
 
 @dataclass

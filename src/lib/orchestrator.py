@@ -1,9 +1,12 @@
-from typing import Dict, Any
+from typing import Any, Dict
 from lib.ghostmcp_runner import GhostMCPToolRunner
 from lib.llm_client import Client as LLMClient
 import json
+import os
 import re
 import shutil
+import time
+from datetime import datetime
 from jsonschema import validate, ValidationError
 
 
@@ -35,6 +38,8 @@ from lib.reporting_engine import generate_markdown_report
 
 
 class Orchestrator:
+    _REQUIRED_TOOL_ARGS: Dict[str, list[str]] = {}
+
     def __init__(self):
         # GhostMCP runs in-process (imported as a module via submodule + editable install)
         self.mcp = GhostMCPToolRunner()
@@ -43,17 +48,25 @@ class Orchestrator:
 
     def _load_scope(self) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
         # Load from env or file in future; default to RFC1918 + loopback for safety
-        scope_str = os.getenv("PENTEST_AGENT_ALLOWED_CIDRS", "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")
+        scope_str = os.getenv(
+            "ARES_ALLOWED_CIDRS",
+            "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+        )
         return [ipaddress.ip_network(c.strip()) for t in scope_str.split(",") if (c := t.strip())]
 
     def _validate_scope(self, targets: list[str]) -> list[str]:
+        allowed_cidrs = getattr(self, "allowed_cidrs", None)
+        if allowed_cidrs is None:
+            allowed_cidrs = self._load_scope()
+            self.allowed_cidrs = allowed_cidrs
+
         valid = []
         for target in targets:
             try:
                 # Handle single IP or hostname (best effort)
                 # Note: Hostname resolution happens later in tools, but we check CIDRs here
                 ip = ipaddress.ip_address(target)
-                if any(ip in cidr for cidr in self.allowed_cidrs):
+                if any(ip in cidr for cidr in allowed_cidrs):
                     valid.append(target)
             except ValueError:
                 # Likely a hostname; pass through if policy allows (default yes for now)

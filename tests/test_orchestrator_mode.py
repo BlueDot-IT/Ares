@@ -1,5 +1,7 @@
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 import unittest
 import types
@@ -69,15 +71,21 @@ class OrchestratorModeTests(unittest.TestCase):
         orchestrator.llm = _FakeLLM(planner_responses)
 
         lines = []
-        orchestrator.run_scan(
-            {
-                "targets": "127.0.0.1",
-                "resolve_dns": False,
-                "enable_ipv6": False,
-                "mode": "enum",
-            },
-            lines.append,
-        )
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                orchestrator.run_scan(
+                    {
+                        "targets": "127.0.0.1",
+                        "resolve_dns": False,
+                        "enable_ipv6": False,
+                        "mode": "enum",
+                    },
+                    lines.append,
+                )
+            finally:
+                os.chdir(old_cwd)
 
         self.assertTrue(any("not allowed in mode 'enum'" in line for line in lines))
         self.assertFalse(any(tool == "msf_search" for tool, _ in orchestrator.mcp.calls))

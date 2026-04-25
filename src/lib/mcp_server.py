@@ -2,11 +2,27 @@
 import json
 import sys
 import subprocess
+import os
+import shutil
 from typing import Any, Dict, List
 
 # -------------------------------------------------
 # Helpers
 # -------------------------------------------------
+
+def _apply_tor_wrapper(cmd: List[str]) -> List[str]:
+    if os.getenv("ARES_FORCE_TOR") != "1":
+        return cmd
+    if not cmd or cmd[0] in {"torsocks", "proxychains4", "proxychains"}:
+        return cmd
+    if shutil.which("torsocks"):
+        return ["torsocks"] + cmd
+    if shutil.which("proxychains4"):
+        return ["proxychains4"] + cmd
+    if shutil.which("proxychains"):
+        return ["proxychains"] + cmd
+    return cmd
+
 
 def _run(cmd: List[str], timeout: int = 60) -> Dict[str, Any]:
     def _to_text(blob: Any) -> str:
@@ -25,6 +41,7 @@ def _run(cmd: List[str], timeout: int = 60) -> Dict[str, Any]:
             return ""
 
     try:
+        cmd = _apply_tor_wrapper(cmd)
         proc = subprocess.run(
             cmd,
             capture_output=True,
@@ -372,53 +389,90 @@ TOOLS = {
 # MCP loop
 # -------------------------------------------------
 
-def send(obj: Dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
+from lib.mcp_session import read_rpc_message, write_rpc_message
+
+
+def _tool_inventory() -> list[Dict[str, Any]]:
+    return [
+        {
+            "name": name,
+            "description": (fn.__doc__ or "").strip(),
+            "inputSchema": {"type": "object", "additionalProperties": True},
+        }
+        for name, fn in sorted(TOOLS.items())
+    ]
+
+
+def _result_payload(result: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "content": [{"type": "text", "text": json.dumps(result, sort_keys=True)}],
+        "structuredContent": result,
+        "isError": False,
+    }
+
+
+def _send_response(request_id: Any, *, result: Dict[str, Any] | None = None, error: str | None = None, code: int = -32000) -> None:
+    payload: Dict[str, Any] = {"jsonrpc": "2.0", "id": request_id}
+    if error is not None:
+        payload["error"] = {"code": code, "message": error}
+    else:
+        payload["result"] = result or {}
+    write_rpc_message(sys.stdout.buffer, payload)
+
+
+def _handle_request(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    if method == "initialize":
+        return {
+            "protocolVersion": params.get("protocolVersion") or "2024-11-05",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "ares-lib-mcp", "version": "0.1.0"},
+        }
+    if method == "ping":
+        return {}
+    if method == "tools/list":
+        return {"tools": _tool_inventory()}
+    if method == "tools/call":
+        tool = str(params.get("name") or "")
+        arguments = params.get("arguments")
+        if not isinstance(arguments, dict):
+            arguments = {}
+        if tool not in TOOLS:
+            raise ValueError(f"Unknown tool: {tool}")
+        result = TOOLS[tool](arguments)
+        if not isinstance(result, dict):
+            result = {"result": result}
+        return _result_payload(result)
+    if method == "shutdown":
+        return {}
+    raise ValueError(f"Unknown method: {method}")
+
 
 def main() -> None:
-    send({
-        "type": "hello",
-        "protocol": "mcp",
-        "tools": {
-            name: {
-                "name": name,
-                "description": fn.__doc__ or "",
-            }
-            for name, fn in TOOLS.items()
-        },
-    })
-
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-
-        req = None
+    should_exit = False
+    while not should_exit:
         try:
-            req = json.loads(line)
-            req_id = req.get("id")
-            tool = req.get("tool")
-            args = req.get("args", {})
+            request = read_rpc_message(sys.stdin.buffer)
+        except EOFError:
+            return
+        request_id = request.get("id")
+        method = str(request.get("method") or "")
+        params = request.get("params")
+        if not isinstance(params, dict):
+            params = {}
+        if request_id is None:
+            if method in {"notifications/initialized", "initialized"}:
+                continue
+            if method == "exit":
+                return
+            continue
+        try:
+            result = _handle_request(method, params)
+            _send_response(request_id, result=result)
+            if method == "shutdown":
+                should_exit = True
+        except Exception as exc:
+            _send_response(request_id, error=str(exc), code=-32603)
 
-            if tool not in TOOLS:
-                raise ValueError(f"Unknown tool: {tool}")
-
-            result = TOOLS[tool](args)
-
-            send({
-                "id": req_id,
-                "ok": True,
-                "result": result,
-            })
-
-        except Exception as e:
-            send({
-                "id": req.get("id") if req else None,
-                "ok": False,
-                "error": str(e),
-                "error_type": type(e).__name__,
-            })
 
 if __name__ == "__main__":
     main()
