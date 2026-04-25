@@ -1,14 +1,18 @@
 # Ares
 
-Ares is an autonomous pentesting runtime for authorized engagements that aims to combine the best parts of Hermes and OpenClaw.
+Ares is an autonomous pentesting runtime for authorized engagements that combines Hermes-style agent execution with OpenClaw-style operator control.
 
-In practical terms, Ares is positioned as:
+Concretely, the current system already includes:
 
-- a Hermes-like agent runtime for provider-flexible tool use, policy-aware execution, and repeatable operator workflows
-- an OpenClaw-like operator surface for controlled runs, session visibility, event streaming, routing, and operational oversight
-- a pentest-specific shell around both, with ROE-aware controls, evidence capture, reporting, and explicit approval boundaries
+- multi-provider agent execution with native Anthropic and Gemini adapters plus OpenAI-compatible endpoints under one shared runtime
+- a central ToolRegistry and GhostMCP integration layer so tools are exposed through one model-facing contract instead of provider-specific glue
+- dispatcher-owned policy enforcement for scope, ROE, risk, approval gates, duplicate suppression, timeouts, and route selection outside the model
+- operator-facing control surfaces including a CLI, curses TUI, lightweight HTTP gateway, event stream, session persistence, and report generation
+- pentest-specific state handling for hosts, services, tool calls, evidence normalization, and Markdown reporting
 
-Release status: `0.1.0-alpha`. This release is intended for controlled lab use and explicitly authorized testing. It is an alpha foundation for the "best of Hermes + OpenClaw for pentesting" direction, not yet a finished production pentest platform.
+That is the intended shape of Ares: the best operational ideas from Hermes and OpenClaw, narrowed onto authorized pentesting rather than general-purpose agent work.
+
+Release status: `0.1.0-alpha`. This release is intended for controlled lab use and explicitly authorized testing. It is an alpha foundation for that direction, not yet a finished production pentest platform.
 
 Repository layout:
 
