@@ -1,25 +1,34 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
+from ares.engagement_memory import build_engagement_memory_context
 from ares.state.db import StateDB
 
 
 class ContextBuilder:
     """Build compact model-facing state summaries from persisted session data."""
 
-    def __init__(self, db: StateDB) -> None:
+    def __init__(self, db: StateDB, *, home: Path | str | None = None) -> None:
         self.db = db
+        self.home = Path(home).expanduser() if home is not None else None
 
-    def build_session_context(self, session_id: int) -> str:
+    def build_session_context(self, session_id: int, *, target: str | None = None, memory_tags: tuple[str, ...] = ()) -> str:
         calls = self.db.list_tool_calls(session_id)
+        lines = ["Current engagement state:"]
         if not calls:
-            return "Current engagement state: no prior tool calls in this session."
-        lines = ["Current engagement state:", "Known prior tool calls:"]
-        for call in calls[-20:]:
-            summary = self._summarize_call(call)
-            lines.append(f"- {call['tool']} [{call['status']}]: {summary}")
+            lines.append("Known prior tool calls: none in this session.")
+        else:
+            lines.append("Known prior tool calls:")
+            for call in calls[-20:]:
+                summary = self._summarize_call(call)
+                lines.append(f"- {call['tool']} [{call['status']}]: {summary}")
+        if self.home is not None:
+            memory_context = build_engagement_memory_context(self.home, target=target, memory_tags=memory_tags)
+            if memory_context:
+                lines.extend(["", memory_context])
         return "\n".join(lines)
 
     def _summarize_call(self, call: dict[str, Any]) -> str:

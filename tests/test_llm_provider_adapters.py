@@ -64,8 +64,9 @@ class ProviderSelectionTests(unittest.TestCase):
         from ares.run import build_model
 
         with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
             config = AppConfig(
-                home=Path(tmp),
+                home=home,
                 llm=LLMConfig(provider="gemini", model="gemini-2.5-pro"),
                 policy=PolicyConfig(),
             )
@@ -74,7 +75,78 @@ class ProviderSelectionTests(unittest.TestCase):
                     model = build_model(config)
 
         self.assertIsInstance(model, GeminiModel)
-        create_client.assert_called_once_with(api_key="gem-key")
+        create_client.assert_called_once_with(
+            api_key="gem-key",
+            auth_mode="api-key",
+            oauth_token_command="",
+            oauth_project="",
+            oauth_location="",
+            home=home,
+            provider="gemini",
+        )
+
+    def test_build_model_passes_openai_oauth_settings_to_openai_compat_adapter(self):
+        from ares.config.loader import AppConfig, LLMConfig, PolicyConfig
+        from ares.llm.openai_compat import OpenAICompatModel
+        from ares.run import build_model
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config = AppConfig(
+                home=home,
+                llm=LLMConfig(
+                    provider="openai",
+                    model="gpt-4.1-mini",
+                    openai_base_url="https://api.openai.com/v1",
+                    auth_mode="oauth",
+                    oauth_token_command="print-openai-token",
+                ),
+                policy=PolicyConfig(),
+            )
+            with patch.object(OpenAICompatModel, "_create_client", return_value=object()) as create_client:
+                model = build_model(config)
+
+        self.assertIsInstance(model, OpenAICompatModel)
+        create_client.assert_called_once_with(
+            base_url="https://api.openai.com/v1",
+            api_key=None,
+            auth_mode="oauth",
+            oauth_token_command="print-openai-token",
+            home=home,
+            provider="openai",
+        )
+
+    def test_build_model_passes_gemini_oauth_settings_to_gemini_adapter(self):
+        from ares.config.loader import AppConfig, LLMConfig, PolicyConfig
+        from ares.llm.gemini_adapter import GeminiModel
+        from ares.run import build_model
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config = AppConfig(
+                home=home,
+                llm=LLMConfig(
+                    provider="gemini",
+                    model="gemini-2.5-pro",
+                    auth_mode="oauth",
+                    oauth_project="demo-project",
+                    oauth_location="us-central1",
+                ),
+                policy=PolicyConfig(),
+            )
+            with patch.object(GeminiModel, "_create_client", return_value=object()) as create_client:
+                model = build_model(config)
+
+        self.assertIsInstance(model, GeminiModel)
+        create_client.assert_called_once_with(
+            api_key=None,
+            auth_mode="oauth",
+            oauth_token_command="",
+            oauth_project="demo-project",
+            oauth_location="us-central1",
+            home=home,
+            provider="gemini",
+        )
 
 
 class AnthropicAdapterTests(unittest.TestCase):

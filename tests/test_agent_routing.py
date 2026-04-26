@@ -51,6 +51,80 @@ class AgentRoutingTests(unittest.TestCase):
         self.assertFalse(effective.policy.allow_private_only)
         self.assertEqual(effective.agents.active_agent, "web")
 
+    def test_agent_router_can_match_prompt_and_roe_profile_and_prompt_prefix_flows_into_runtime(self):
+        from ares.agent.runtime import ModelResponse
+        from ares.config.loader import (
+            AgentProfileConfig,
+            AgentRouteConfig,
+            AgentsConfig,
+            AppConfig,
+            LLMConfig,
+            PolicyConfig,
+        )
+        from ares.routing import AgentRouter
+        from ares.run import run_once
+        from ares.tools.registry import ToolRegistry
+
+        class CapturingModel:
+            def __init__(self):
+                self.messages = []
+
+            def complete(self, messages, tools):
+                self.messages = list(messages)
+                return ModelResponse(final_text="done")
+
+        registry = ToolRegistry()
+        registry.register(
+            name="web_probe",
+            toolset="web",
+            risk="passive",
+            schema={"name": "web_probe", "description": "web", "parameters": {"type": "object"}},
+            handler=lambda args, **_: {"ok": True},
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AppConfig(
+                home=Path(tmp),
+                llm=LLMConfig(model="unit-model"),
+                policy=PolicyConfig(max_risk="active", allow_private_only=True, roe_profile="safe-active"),
+                agents=AgentsConfig(
+                    default_agent="default",
+                    profiles={
+                        "default": AgentProfileConfig(name="default"),
+                        "web": AgentProfileConfig(
+                            name="web",
+                            enabled_toolsets=("web",),
+                            allow_private_only=False,
+                            prompt_prefix="[web-recon] ",
+                            memory_tags=("recon", "external"),
+                        ),
+                    },
+                    routes=(
+                        AgentRouteConfig(
+                            agent="web",
+                            prompt_contains=("recon",),
+                            roe_profiles=("safe-active",),
+                        ),
+                    ),
+                ),
+            )
+            router = AgentRouter(config.agents)
+            resolution = router.resolve(prompt="recon the target", target="https://example.com", roe_profile="safe-active")
+            model = CapturingModel()
+            result = run_once(
+                prompt="recon the target",
+                target="https://example.com",
+                config=config,
+                model=model,
+                registry=registry,
+            )
+
+        self.assertEqual(resolution.agent_name, "web")
+        self.assertEqual(resolution.reason, "route")
+        self.assertEqual(result.final_response, "done")
+        user_message = [message for message in model.messages if message.get("role") == "user"][-1]["content"]
+        self.assertIn("Task: [web-recon] recon the target", user_message)
+
     def test_run_once_selects_agent_profile_records_agent_and_filters_visible_toolsets(self):
         from ares.agent.runtime import ModelResponse
         from ares.config.loader import (

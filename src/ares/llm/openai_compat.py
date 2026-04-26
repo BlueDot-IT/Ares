@@ -5,6 +5,7 @@ from typing import Any
 
 from .base import ModelResponse, ToolCall
 from .common import emit_text_stream
+from .oauth import build_openai_oauth_token_provider
 
 
 class OpenAICompatModel:
@@ -24,10 +25,20 @@ class OpenAICompatModel:
         provider: str = "openai",
         temperature: float = 0,
         max_tokens: int | None = None,
+        auth_mode: str = "api-key",
+        oauth_token_command: str = "",
+        home: Any | None = None,
     ) -> None:
         self.model = model
         self.provider = provider
-        self.client = client or self._create_client(base_url=base_url, api_key=api_key)
+        self.client = client or self._create_client(
+            base_url=base_url,
+            api_key=api_key,
+            auth_mode=auth_mode,
+            oauth_token_command=oauth_token_command,
+            home=home,
+            provider=provider,
+        )
         self.temperature = temperature
         self.max_tokens = max_tokens
 
@@ -78,7 +89,15 @@ class OpenAICompatModel:
         )
 
     @staticmethod
-    def _create_client(*, base_url: str | None, api_key: str | None) -> Any:
+    def _create_client(
+        *,
+        base_url: str | None,
+        api_key: str | None,
+        auth_mode: str = "api-key",
+        oauth_token_command: str = "",
+        home: Any | None = None,
+        provider: str = "openai",
+    ) -> Any:
         try:
             from openai import OpenAI
         except Exception as exc:  # pragma: no cover - only hit without dependency
@@ -86,6 +105,12 @@ class OpenAICompatModel:
         kwargs: dict[str, Any] = {}
         if base_url is not None:
             kwargs["base_url"] = base_url
-        if api_key is not None:
+        if auth_mode == "oauth":
+            kwargs["api_key"] = build_openai_oauth_token_provider(
+                oauth_token_command,
+                home=home,
+                provider=provider,
+            )
+        elif api_key is not None:
             kwargs["api_key"] = api_key
         return OpenAI(**kwargs)

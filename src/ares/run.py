@@ -36,9 +36,19 @@ def build_registry() -> ToolRegistry:
     return registry
 
 
-def _build_single_model(*, provider: str, model: str, openai_base_url: str) -> ModelClient:
+def _build_single_model(
+    *,
+    home: Path,
+    provider: str,
+    model: str,
+    openai_base_url: str,
+    auth_mode: str = "api-key",
+    oauth_token_command: str = "",
+    oauth_project: str = "",
+    oauth_location: str = "",
+) -> ModelClient:
     spec = resolve_provider(provider)
-    api_key = resolve_api_key(spec.name)
+    api_key = None if auth_mode == "oauth" else resolve_api_key(spec.name)
     if spec.family == "anthropic":
         return AnthropicModel(
             model=model,
@@ -50,12 +60,20 @@ def _build_single_model(*, provider: str, model: str, openai_base_url: str) -> M
             model=model,
             api_key=api_key,
             provider=spec.name,
+            auth_mode=auth_mode,
+            oauth_token_command=oauth_token_command,
+            oauth_project=oauth_project,
+            oauth_location=oauth_location,
+            home=home,
         )
     return OpenAICompatModel(
         model=model,
         base_url=openai_base_url,
-        api_key=api_key or os.getenv("ARES_OPENAI_API_KEY", "lm-studio"),
+        api_key=None if auth_mode == "oauth" else (api_key or os.getenv("ARES_OPENAI_API_KEY", "lm-studio")),
         provider=spec.name,
+        auth_mode=auth_mode,
+        oauth_token_command=oauth_token_command,
+        home=home,
     )
 
 
@@ -95,18 +113,28 @@ def build_model(config: AppConfig) -> ModelClient:
     primary_provider = resolve_provider(config.llm.provider).name
     if not config.llm.fallbacks:
         return _build_single_model(
+            home=config.home,
             provider=primary_provider,
             model=config.llm.model,
             openai_base_url=config.llm.openai_base_url,
+            auth_mode=config.llm.auth_mode,
+            oauth_token_command=config.llm.oauth_token_command,
+            oauth_project=config.llm.oauth_project,
+            oauth_location=config.llm.oauth_location,
         )
     candidates = [
         FailoverCandidate(
             provider=primary_provider,
             model=config.llm.model,
-            client=lambda provider=primary_provider, model=config.llm.model, openai_base_url=config.llm.openai_base_url: _build_single_model(
+            client=lambda provider=primary_provider, model=config.llm.model, openai_base_url=config.llm.openai_base_url, auth_mode=config.llm.auth_mode, oauth_token_command=config.llm.oauth_token_command, oauth_project=config.llm.oauth_project, oauth_location=config.llm.oauth_location: _build_single_model(
+                home=config.home,
                 provider=provider,
                 model=model,
                 openai_base_url=openai_base_url,
+                auth_mode=auth_mode,
+                oauth_token_command=oauth_token_command,
+                oauth_project=oauth_project,
+                oauth_location=oauth_location,
             ),
         )
     ]
@@ -121,10 +149,15 @@ def build_model(config: AppConfig) -> ModelClient:
             FailoverCandidate(
                 provider=provider,
                 model=model,
-                client=lambda provider=provider, model=model, openai_base_url=fallback_base_url: _build_single_model(
+                client=lambda provider=provider, model=model, openai_base_url=fallback_base_url, auth_mode=config.llm.auth_mode, oauth_token_command=config.llm.oauth_token_command, oauth_project=config.llm.oauth_project, oauth_location=config.llm.oauth_location: _build_single_model(
+                    home=config.home,
                     provider=provider,
                     model=model,
                     openai_base_url=openai_base_url,
+                    auth_mode=auth_mode,
+                    oauth_token_command=oauth_token_command,
+                    oauth_project=oauth_project,
+                    oauth_location=oauth_location,
                 ),
             )
         )
@@ -132,8 +165,10 @@ def build_model(config: AppConfig) -> ModelClient:
     return FailoverModel(candidates)
 
 
-def build_user_message(prompt: str, target: str | None = None) -> str:
+def build_user_message(prompt: str, target: str | None = None, prompt_prefix: str | None = None) -> str:
     prompt = prompt.strip()
+    if prompt_prefix:
+        prompt = f"{prompt_prefix}{prompt}".strip()
     if target:
         return f"Target: {target.strip()}\n\nTask: {prompt}"
     return prompt
@@ -209,6 +244,8 @@ def build_model_snapshot(*, config: AppConfig | None = None) -> dict[str, Any]:
         "model_source": _source("ARES_LLM_MODEL", "model"),
         "base_url": config.llm.openai_base_url or "-",
         "base_url_source": _source("ARES_OPENAI_BASE_URL", "openai_base_url"),
+        "auth_mode": config.llm.auth_mode,
+        "auth_mode_source": _source("ARES_LLM_AUTH_MODE", "auth_mode"),
         "fallbacks": list(config.llm.fallbacks),
         "fallbacks_source": f"config:{path}" if persisted.get("fallbacks") else "none",
         "config_path": str(path),
@@ -225,6 +262,7 @@ def format_model_snapshot(snapshot: dict[str, Any]) -> str:
             f"provider: {snapshot['provider']} ({snapshot['provider_source']})",
             f"model: {snapshot['model']} ({snapshot['model_source']})",
             f"base_url: {snapshot['base_url']} ({snapshot['base_url_source']})",
+            f"auth_mode: {snapshot['auth_mode']} ({snapshot['auth_mode_source']})",
             f"fallbacks: {fallback_chain} ({snapshot.get('fallbacks_source', 'none')})",
             f"config_path: {snapshot['config_path']}",
         ]
@@ -272,7 +310,12 @@ def run_once(
     """Run a single autonomous task through the new runtime stack."""
     config = config or load_config()
     router = AgentRouter(config.agents)
-    resolution = router.resolve(target=target, requested_agent=requested_agent)
+    resolution = router.resolve(
+        prompt=prompt,
+        target=target,
+        requested_agent=requested_agent,
+        roe_profile=config.policy.roe_profile,
+    )
     config = apply_agent_profile(config, resolution)
     registry = registry or build_registry()
     policy = build_policy(config)
@@ -295,6 +338,7 @@ def run_once(
         event.setdefault("target", target)
         event.setdefault("agent", resolution.agent_name)
         event.setdefault("requested_agent", requested_agent)
+        event.setdefault("memory_tags", list(resolution.profile.memory_tags))
         event.setdefault("session_id", session_id)
         if event_callback is not None:
             event_callback(event)
@@ -322,7 +366,11 @@ def run_once(
         policy=policy,
         playbooks=[playbook.content for playbook in playbooks],
     )
-    context_summary = ContextBuilder(state_db).build_session_context(session_id)
+    context_summary = ContextBuilder(state_db, home=config.home).build_session_context(
+        session_id,
+        target=target,
+        memory_tags=resolution.profile.memory_tags,
+    )
     roe_profile = ROEProfileRegistry.builtin().get(config.policy.roe_profile)
     dispatcher = ToolDispatcher(
         registry=registry,
@@ -345,7 +393,7 @@ def run_once(
         disabled_toolsets=disabled_toolsets,
     )
     try:
-        result = runtime.run(build_user_message(prompt, target))
+        result = runtime.run(build_user_message(prompt, target, resolution.profile.prompt_prefix))
         persist_messages(state_db, session_id, result.messages)
         state_db.finish_session(session_id, result.stop_reason)
     except Exception as exc:

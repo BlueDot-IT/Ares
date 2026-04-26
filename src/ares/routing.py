@@ -27,12 +27,19 @@ class AgentRouter:
     def __init__(self, config: AgentsConfig | None = None) -> None:
         self.config = config or AgentsConfig()
 
-    def resolve(self, *, target: str | None = None, requested_agent: str | None = None) -> AgentResolution:
+    def resolve(
+        self,
+        *,
+        prompt: str | None = None,
+        target: str | None = None,
+        requested_agent: str | None = None,
+        roe_profile: str | None = None,
+    ) -> AgentResolution:
         if requested_agent:
             profile = self._profile_for(requested_agent)
             return AgentResolution(agent_name=profile.name, profile=profile, reason="requested")
         for route in self.config.routes:
-            if self._matches(route, target):
+            if self._matches(route, prompt=prompt, target=target, roe_profile=roe_profile):
                 profile = self._profile_for(route.agent)
                 return AgentResolution(agent_name=profile.name, profile=profile, reason="route")
         profile = self._profile_for(self.config.default_agent)
@@ -45,20 +52,25 @@ class AgentRouter:
             return AgentProfileConfig(name="default")
         raise KeyError(f"unknown agent profile: {name}")
 
-    def _matches(self, route: AgentRouteConfig, target: str | None) -> bool:
-        if target is None:
-            return False
-        parsed = urlparse(str(target))
+    def _matches(self, route: AgentRouteConfig, *, prompt: str | None, target: str | None, roe_profile: str | None) -> bool:
+        raw_prompt = str(prompt or "").lower()
+        raw_target = str(target or "").lower()
+        parsed = urlparse(str(target or ""))
         scheme = parsed.scheme.lower()
-        raw_target = str(target).lower()
         if route.target_schemes and scheme not in {item.lower() for item in route.target_schemes}:
             return False
         if route.target_contains and not any(token.lower() in raw_target for token in route.target_contains):
             return False
-        if route.match_private is not None:
+        if route.prompt_contains and not any(token.lower() in raw_prompt for token in route.prompt_contains):
+            return False
+        if route.roe_profiles and str(roe_profile or "").lower() not in {item.lower() for item in route.roe_profiles}:
+            return False
+        if route.match_private is not None and target is not None:
             is_private = _target_is_private(target)
             if is_private != route.match_private:
                 return False
+        if route.match_private is not None and target is None:
+            return False
         return True
 
 

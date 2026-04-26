@@ -41,9 +41,11 @@ Implemented and wired into the current runtime:
 - SQLite persistence for sessions, messages, tool calls, hosts, and services
 - Normalized Nmap evidence parsing into hosts and services
 - Markdown report rendering from the StateDB
-- Lightweight HTTP gateway for background runs, run status, and event streaming
-- Python hook loading for session automation and auto-report generation
-- Multi-agent routing with agent profiles, route selection, and per-agent tool visibility
+- Lightweight HTTP gateway for background runs, run status, event streaming, web operator views, exposed-mode auth, pairing codes, CIDR allowlists, and JSONL audit events
+- Python hook loading for session automation, auto-report generation, built-in lifecycle hooks, and engagement-memory capture
+- Multi-agent routing with agent profiles, route selection, prompt prefixes, memory tags, route preview, and per-agent tool visibility
+- Guided onboarding for provider selection, auth mode, theme, gateway exposure, and hook defaults
+- Cached OAuth helpers for supported model providers, currently Gemini/Google OAuth
 - New curses-based TUI for dashboard, sessions, doctor view, tool inventory, run launching, and report writing
 
 ## Install
@@ -110,6 +112,44 @@ ares run --target 127.0.0.1 --approve-dangerous --prompt "..."
 ```
 
 `--approve-dangerous` only satisfies dispatcher approval gates. Scope and risk policy still run before execution.
+
+## Onboarding and provider setup
+
+Run the guided first-run setup when you want Ares to persist model, theme, gateway, and hook defaults without hand-editing config:
+
+```bash
+ares onboard
+```
+
+The onboarding flow uses a menu in a real terminal and numbered choices in scripted/non-TTY runs. It writes to `~/.ares/config.json` by default, or to `$ARES_HOME/config.json` when `ARES_HOME` is set.
+
+For model-only setup, use the shared model wizard:
+
+```bash
+ares model --interactive
+```
+
+The current provider choices are:
+
+- `local` - OpenAI-compatible local server, defaulting to `http://127.0.0.1:1234/v1`, with the endpoint editable
+- `openai` - OpenAI cloud, defaulting to `gpt-4.1-mini` and `https://api.openai.com/v1`, with the endpoint hidden in normal setup
+- `openrouter` - OpenRouter cloud, defaulting to `openai/gpt-4o-mini` and `https://openrouter.ai/api/v1`, with the endpoint hidden in normal setup
+- `anthropic` - native Anthropic adapter, no OpenAI-compatible endpoint prompt
+- `gemini` - native Gemini adapter, no OpenAI-compatible endpoint prompt, supports API key or OAuth
+- `custom` - operator-provided OpenAI-compatible endpoint and model
+
+Only Gemini currently has a built-in OAuth broker. OpenAI, OpenRouter, Anthropic, local, and custom OpenAI-compatible profiles remain API-key based unless a real provider-specific OAuth broker is added.
+
+Manage cached OAuth credentials with:
+
+```bash
+ares auth login --provider gemini
+ares auth status
+ares auth status --provider gemini
+ares auth logout --provider gemini
+```
+
+Gemini OAuth caches token metadata under `~/.ares/oauth/`. It uses an installed-app browser flow when `ARES_GOOGLE_OAUTH_CLIENT_SECRETS` or `GOOGLE_OAUTH_CLIENT_SECRETS` points to a Google client secrets file. Otherwise it falls back to Google application default credentials. See `docs/onboarding.md` for the full provider and auth matrix.
 
 ## TUI
 
@@ -190,9 +230,19 @@ python src/main.py
 
 ## Tests
 
+Use the project test tree rather than bare repository-wide collection if vendored test packaging is not installed:
+
 ```bash
-python -m pytest -q
-python -m py_compile src/ares/*.py src/ares/agent/*.py src/ares/config/*.py src/ares/evidence/*.py src/ares/llm/*.py src/ares/playbooks/*.py src/ares/reporting/*.py src/ares/tools/*.py src/ares/policy/*.py src/ares/state/*.py src/ares/*.py src/lib/*.py
+python -m pytest tests -q
+python -m compileall src/ares
+```
+
+Targeted checks for onboarding/auth work:
+
+```bash
+python -m pytest tests/test_prompt_ui.py -q
+python -m pytest tests/test_oauth_flows.py -q
+python -m pytest tests/test_onboard_cli.py tests/test_cli_model.py tests/test_model_config.py tests/test_llm_provider_adapters.py tests/test_cli_auth.py -q
 ```
 
 ## Release guidance

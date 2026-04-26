@@ -7,10 +7,12 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from ares.config.loader import AppConfig, GatewayConfig, load_config, resolve_gateway_mode
+from ares.gateway_auth import GatewayAuthManager, extract_bearer_token
 from ares.run import run_once
 from ares.webui import build_web_ui_css, build_web_ui_html, build_web_ui_js
 
@@ -66,6 +68,16 @@ class AresGateway:
         self._runs: dict[str, GatewayRunState] = {}
         self._events: list[dict[str, Any]] = []
         self._next_seq = 1
+        self.auth = GatewayAuthManager(
+            auth_enabled=self.config.gateway.auth_enabled,
+            operator_token=self.config.gateway.operator_token,
+        )
+        self.audit_log_path = Path(self.config.home) / "gateway-audit.jsonl"
+
+    def issue_pairing_code(self, *, label: str | None = None, client_host: str | None = None) -> str:
+        code = self.auth.issue_pairing_code(label=label)
+        self._append_audit_event("pairing_code_issued", label=str(label or ""), client_host=client_host)
+        return code
 
     def submit_run(
         self,
@@ -89,6 +101,12 @@ class AresGateway:
         state.thread = thread
         with self._lock:
             self._runs[run_id] = state
+        self._append_audit_event(
+            "run_submitted",
+            run_id=run_id,
+            target=target,
+            requested_agent=requested_agent,
+        )
         thread.start()
         return state.to_dict()
 
@@ -194,15 +212,63 @@ class AresGateway:
             self._next_seq += 1
             self._events.append(payload)
 
+    def login_operator(self, operator_token: str, *, client_host: str | None = None) -> str | None:
+        session_token = self.auth.login(operator_token)
+        self._append_audit_event(
+            "auth_login_succeeded" if session_token else "auth_login_failed",
+            client_host=client_host,
+        )
+        return session_token
 
-def gateway_mode_allows_client(mode: str | None, client_host: str | None) -> bool:
-    normalized_mode = resolve_gateway_mode(mode)
+    def exchange_pairing_code(self, code: str, *, client_host: str | None = None) -> str | None:
+        session_token = self.auth.exchange_pairing_code(code)
+        self._append_audit_event(
+            "pairing_exchange_succeeded" if session_token else "pairing_exchange_failed",
+            client_host=client_host,
+        )
+        return session_token
+
+    def request_is_authenticated(self, authorization_header: str | None) -> bool:
+        return self.auth.validate_session(extract_bearer_token(authorization_header))
+
+    def _append_audit_event(self, event: str, **fields: Any) -> None:
+        payload = {"event": event, "ts": time.time(), **fields}
+        self.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.audit_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def _normalize_client_address(client_host: str | None) -> ipaddress._BaseAddress | None:
     try:
         address = ipaddress.ip_address(str(client_host or "").strip())
     except ValueError:
-        return False
+        return None
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         address = address.ipv4_mapped
+    return address
+
+
+def gateway_allowlist_allows_client(allow_cidrs: tuple[str, ...] | list[str] | None, client_host: str | None) -> bool:
+    if not allow_cidrs:
+        return True
+    address = _normalize_client_address(client_host)
+    if address is None:
+        return False
+    for raw_network in allow_cidrs:
+        try:
+            network = ipaddress.ip_network(str(raw_network).strip(), strict=False)
+        except ValueError:
+            continue
+        if address in network:
+            return True
+    return False
+
+
+def gateway_mode_allows_client(mode: str | None, client_host: str | None) -> bool:
+    normalized_mode = resolve_gateway_mode(mode)
+    address = _normalize_client_address(client_host)
+    if address is None:
+        return False
     if normalized_mode == "exposed":
         return True
     if normalized_mode == "loopback":
@@ -222,15 +288,24 @@ def start_gateway_server(
         server_version = "AresGateway/0.1"
 
         def do_GET(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
             if not self._client_allowed():
                 self._reject_forbidden_client()
                 return
-            parsed = urlparse(self.path)
+            if not self._request_authorized(parsed.path):
+                self._reject_unauthorized()
+                return
             if parsed.path == "/":
-                self._send_text(build_web_ui_html(), content_type="text/html; charset=utf-8")
+                self._send_text(
+                    build_web_ui_html(auth_required=gateway.auth.auth_required(mode=access_mode)),
+                    content_type="text/html; charset=utf-8",
+                )
                 return
             if parsed.path == "/app.js":
-                self._send_text(build_web_ui_js(), content_type="application/javascript; charset=utf-8")
+                self._send_text(
+                    build_web_ui_js(auth_required=gateway.auth.auth_required(mode=access_mode)),
+                    content_type="application/javascript; charset=utf-8",
+                )
                 return
             if parsed.path == "/app.css":
                 self._send_text(build_web_ui_css(), content_type="text/css; charset=utf-8")
@@ -256,16 +331,50 @@ def start_gateway_server(
             self._send_json({"error": "not_found"}, status=404)
 
         def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
             if not self._client_allowed():
                 self._reject_forbidden_client()
                 return
-            parsed = urlparse(self.path)
+            if parsed.path == "/api/auth/login":
+                payload = self._read_json_payload()
+                session_token = gateway.login_operator(
+                    str(payload.get("operator_token", "")),
+                    client_host=self.client_address[0] if self.client_address else None,
+                )
+                if session_token is None:
+                    self._send_json({"error": "unauthorized"}, status=401)
+                    return
+                self._send_json({"session_token": session_token}, status=200)
+                return
+            if parsed.path == "/api/auth/pair":
+                payload = self._read_json_payload()
+                session_token = gateway.exchange_pairing_code(
+                    str(payload.get("code", "")),
+                    client_host=self.client_address[0] if self.client_address else None,
+                )
+                if session_token is None:
+                    self._send_json({"error": "unauthorized"}, status=401)
+                    return
+                self._send_json({"session_token": session_token}, status=200)
+                return
+            if parsed.path == "/api/auth/pairing-codes":
+                if not self._request_authorized(parsed.path):
+                    self._reject_unauthorized()
+                    return
+                payload = self._read_json_payload()
+                code = gateway.issue_pairing_code(
+                    label=str(payload.get("label", "")).strip() or None,
+                    client_host=self.client_address[0] if self.client_address else None,
+                )
+                self._send_json({"code": code}, status=201)
+                return
+            if not self._request_authorized(parsed.path):
+                self._reject_unauthorized()
+                return
             if parsed.path != "/api/runs":
                 self._send_json({"error": "not_found"}, status=404)
                 return
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length) if length else b"{}"
-            payload = json.loads(raw.decode("utf-8") or "{}")
+            payload = self._read_json_payload()
             created = gateway.submit_run(
                 prompt=str(payload.get("prompt", "")).strip(),
                 target=payload.get("target"),
@@ -286,8 +395,25 @@ def start_gateway_server(
             self.end_headers()
             self.wfile.write(encoded)
 
+        def _read_json_payload(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            payload = json.loads(raw.decode("utf-8") or "{}")
+            return payload if isinstance(payload, dict) else {}
+
         def _client_allowed(self) -> bool:
-            return gateway_mode_allows_client(access_mode, self.client_address[0] if self.client_address else None)
+            client_host = self.client_address[0] if self.client_address else None
+            return gateway_mode_allows_client(access_mode, client_host) and gateway_allowlist_allows_client(
+                gateway.config.gateway.allow_cidrs,
+                client_host,
+            )
+
+        def _request_authorized(self, path: str) -> bool:
+            if path in {"/", "/app.js", "/app.css", "/api/auth/login", "/api/auth/pair"}:
+                return True
+            if not gateway.auth.auth_required(mode=access_mode):
+                return True
+            return gateway.request_is_authenticated(self.headers.get("Authorization"))
 
         def _reject_forbidden_client(self) -> None:
             self._send_json(
@@ -298,6 +424,14 @@ def start_gateway_server(
                 },
                 status=403,
             )
+
+        def _reject_unauthorized(self) -> None:
+            gateway._append_audit_event(
+                "auth_required_denied",
+                client_host=self.client_address[0] if self.client_address else None,
+                path=self.path,
+            )
+            self._send_json({"error": "unauthorized"}, status=401)
 
         def _send_text(self, payload: str, *, content_type: str, status: int = 200) -> None:
             encoded = payload.encode("utf-8")

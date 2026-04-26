@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 
-def build_web_ui_html() -> str:
-    return """<!DOCTYPE html>
+def build_web_ui_html(*, auth_required: bool = False) -> str:
+    auth_hidden = "" if auth_required else " hidden"
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -11,15 +12,43 @@ def build_web_ui_html() -> str:
   <link rel="stylesheet" href="/app.css">
 </head>
 <body data-theme="ember">
-  <div id="app-shell">
+  <div id="app-shell" data-auth-required="{'true' if auth_required else 'false'}">
     <header class="hero panel">
       <div>
         <div class="eyebrow">AUTHORIZED PENTEST OPERATIONS</div>
         <h1>Ares Web UI</h1>
         <p class="subtitle">Hermes-style runtime, OpenClaw-style operator control, focused on pentesting.</p>
       </div>
-      <div id="health-badge" class="badge">connecting</div>
+      <div class="hero-status stack-tight">
+        <div id="health-badge" class="badge">connecting</div>
+        <div id="auth-state-badge" class="badge subtle">browser auth</div>
+      </div>
     </header>
+
+    <section id="auth-panel" class="panel stack"{auth_hidden}>
+      <h2>Gateway Access</h2>
+      <p class="subtitle auth-copy">Authenticate with an operator token or exchange a one-time pairing code.</p>
+      <div id="auth-status" class="status-note">Login or pair to continue.</div>
+      <div class="auth-grid">
+        <form id="login-form" class="stack auth-form">
+          <label>
+            Operator token
+            <input id="operator-token-input" name="operator_token" type="password" placeholder="Persisted operator token">
+          </label>
+          <button id="login-button" type="submit">Login</button>
+        </form>
+        <form id="pair-form" class="stack auth-form">
+          <label>
+            Pairing code
+            <input id="pair-code-input" name="code" type="text" placeholder="One-time pairing code">
+          </label>
+          <button id="pair-button" type="submit">Pair</button>
+        </form>
+      </div>
+      <div class="inline-actions">
+        <button id="logout-button" type="button" class="ghost-button">Forget browser session</button>
+      </div>
+    </section>
 
     <section class="grid">
       <aside id="runs-panel" class="panel stack">
@@ -111,11 +140,21 @@ body {
   gap: 12px;
 }
 
+.stack-tight {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .hero {
   display: flex;
   align-items: start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.hero-status {
+  align-items: end;
 }
 
 .eyebrow {
@@ -137,6 +176,52 @@ body {
   background: #2b1710;
   color: #ffd4a6;
   font-size: 13px;
+}
+
+.badge.subtle {
+  border-color: #6d4026;
+  background: #211511;
+  color: #e8c6a2;
+}
+
+.status-note {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #5b311b;
+  background: #1d110d;
+  color: #ffd8b4;
+}
+
+.auth-copy {
+  margin-top: 0;
+}
+
+.auth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.auth-form {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #5b311b;
+  background: #1d110d;
+}
+
+.inline-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ghost-button {
+  border-color: #744023;
+  background: #1d110d;
+  color: #ffd4a6;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 .list, .feed {
@@ -163,7 +248,8 @@ body {
   gap: 14px;
 }
 
-.run-form label {
+.run-form label,
+.auth-form label {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -204,6 +290,13 @@ button {
   cursor: pointer;
 }
 
+button:disabled,
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .run-card {
   padding: 10px;
   border-radius: 10px;
@@ -223,18 +316,33 @@ button {
 .event-line.session_finished { color: #ffb36b; }
 
 @media (max-width: 1100px) {
-  .grid {
+  .grid,
+  .auth-grid {
     grid-template-columns: 1fr;
+  }
+
+  .hero {
+    flex-direction: column;
+  }
+
+  .hero-status {
+    align-items: start;
   }
 }
 """
 
 
-def build_web_ui_js() -> str:
-    return """const state = {
+def build_web_ui_js(*, auth_required: bool = False) -> str:
+    return """const AUTH_REQUIRED = __AUTH_REQUIRED__;
+const STORAGE_KEY = 'ares.gateway.session_token';
+
+const state = {
   runs: [],
   lastSeq: 0,
   transcript: [],
+  events: [],
+  authRequired: AUTH_REQUIRED,
+  sessionToken: '',
 };
 
 const el = (id) => document.getElementById(id);
@@ -248,11 +356,86 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
+function updateHealthBadge(text) {
+  el('health-badge').textContent = text;
+}
+
+function authSatisfied() {
+  return !state.authRequired || !!state.sessionToken;
+}
+
+function setSessionToken(token) {
+  const normalized = String(token || '').trim();
+  state.sessionToken = normalized;
+  if (normalized) {
+    window.sessionStorage.setItem(STORAGE_KEY, normalized);
+  } else {
+    window.sessionStorage.removeItem(STORAGE_KEY);
+  }
+  renderAuthPanel();
+}
+
+function authHeaders(extraHeaders = {}) {
+  const headers = { ...extraHeaders };
+  if (state.sessionToken) {
+    headers.Authorization = `Bearer ${state.sessionToken}`;
+  }
+  return headers;
+}
+
+async function apiFetch(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: authHeaders(options.headers || {}),
+  });
+  if (response.status === 401) {
+    const error = new Error('unauthorized');
+    error.code = 401;
+    throw error;
+  }
+  return response;
+}
+
+function setRunFormEnabled(enabled) {
+  const form = el('run-form');
+  if (!form) return;
+  for (const field of form.querySelectorAll('input, textarea, button')) {
+    field.disabled = !enabled;
+  }
+}
+
+function renderAuthPanel() {
+  const panel = el('auth-panel');
+  if (!panel) return;
+  panel.hidden = !state.authRequired;
+  const status = el('auth-status');
+  const badge = el('auth-state-badge');
+  const logoutButton = el('logout-button');
+  if (!state.authRequired) {
+    status.textContent = 'Gateway auth not required for this browser session.';
+    badge.textContent = 'auth open';
+    logoutButton.hidden = true;
+    setRunFormEnabled(true);
+    return;
+  }
+  if (state.sessionToken) {
+    status.textContent = 'Browser session authenticated.';
+    badge.textContent = 'auth ok';
+    logoutButton.hidden = false;
+    setRunFormEnabled(true);
+  } else {
+    status.textContent = 'Login or pair to continue.';
+    badge.textContent = 'auth required';
+    logoutButton.hidden = true;
+    setRunFormEnabled(false);
+  }
+}
+
 function renderRuns() {
   const container = el('runs-list');
   if (!state.runs.length) {
     container.className = 'list empty';
-    container.textContent = 'No runs yet.';
+    container.textContent = authSatisfied() ? 'No runs yet.' : 'Authenticate to load runs.';
     return;
   }
   container.className = 'list';
@@ -272,7 +455,7 @@ function renderEvents(events) {
   const container = el('events-feed');
   if (!events.length) {
     container.className = 'feed empty';
-    container.textContent = 'Awaiting gateway events.';
+    container.textContent = authSatisfied() ? 'Awaiting gateway events.' : 'Authenticate to stream gateway events.';
     return;
   }
   container.className = 'feed';
@@ -287,7 +470,7 @@ function renderTranscript() {
   const container = el('transcript-feed');
   if (!state.transcript.length) {
     container.className = 'feed empty';
-    container.textContent = 'Submit a run to begin.';
+    container.textContent = authSatisfied() ? 'Submit a run to begin.' : 'Authenticate before launching runs.';
     return;
   }
   container.className = 'feed';
@@ -300,20 +483,42 @@ function pushTranscriptLine(prefix, text) {
   renderTranscript();
 }
 
+function clearProtectedViews() {
+  state.runs = [];
+  state.events = [];
+  state.lastSeq = 0;
+  renderRuns();
+  renderEvents([]);
+}
+
 async function refreshRuns() {
-  const response = await fetch('/api/runs');
+  if (!authSatisfied()) {
+    state.runs = [];
+    renderRuns();
+    return;
+  }
+  const response = await apiFetch('/api/runs');
   state.runs = await response.json();
   renderRuns();
 }
 
 async function refreshHealth() {
-  const response = await fetch('/health');
+  if (!authSatisfied()) {
+    updateHealthBadge('auth required');
+    return;
+  }
+  const response = await apiFetch('/health');
   const payload = await response.json();
-  el('health-badge').textContent = `${payload.status} · ${payload.runs} runs`;
+  updateHealthBadge(`${payload.status} · ${payload.runs} runs`);
 }
 
 async function refreshEvents() {
-  const response = await fetch(`/api/events?after=${state.lastSeq}`);
+  if (!authSatisfied()) {
+    state.events = [];
+    renderEvents([]);
+    return;
+  }
+  const response = await apiFetch(`/api/events?after=${state.lastSeq}`);
   const payload = await response.json();
   const events = payload.events || [];
   if (!events.length) {
@@ -329,19 +534,41 @@ async function refreshEvents() {
     else if (event.type === 'session_failed') pushTranscriptLine('error    >', message);
     else pushTranscriptLine('event    >', message);
   }
-  renderEvents(await loadAllEvents());
+  await loadAllEvents();
   await refreshRuns();
   await refreshHealth();
 }
 
 async function loadAllEvents() {
-  const response = await fetch('/api/events?after=0');
+  if (!authSatisfied()) {
+    state.events = [];
+    renderEvents([]);
+    return [];
+  }
+  const response = await apiFetch('/api/events?after=0');
   const payload = await response.json();
-  return payload.events || [];
+  state.events = payload.events || [];
+  renderEvents(state.events);
+  return state.events;
+}
+
+async function refreshProtectedState() {
+  if (!authSatisfied()) {
+    clearProtectedViews();
+    updateHealthBadge('auth required');
+    return;
+  }
+  await refreshHealth();
+  await refreshRuns();
+  await loadAllEvents();
 }
 
 async function submitRun(event) {
   event.preventDefault();
+  if (!authSatisfied()) {
+    pushTranscriptLine('status   >', 'Authenticate before launching runs.');
+    return;
+  }
   const payload = {
     target: el('target-input').value.trim() || null,
     agent: el('agent-input').value.trim() || null,
@@ -353,7 +580,7 @@ async function submitRun(event) {
     return;
   }
   pushTranscriptLine('operator >', payload.prompt);
-  const response = await fetch('/api/runs', {
+  const response = await apiFetch('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -365,28 +592,97 @@ async function submitRun(event) {
   await refreshHealth();
 }
 
+async function submitLogin(event) {
+  event.preventDefault();
+  const operatorToken = el('operator-token-input').value.trim();
+  if (!operatorToken) {
+    pushTranscriptLine('status   >', 'Operator token required for login.');
+    return;
+  }
+  const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operator_token: operatorToken }),
+  });
+  if (!response.ok) {
+    pushTranscriptLine('error    >', 'Operator login failed.');
+    return;
+  }
+  const payload = await response.json();
+  setSessionToken(payload.session_token || '');
+  el('login-form').reset();
+  pushTranscriptLine('status   >', 'Browser session authenticated by operator token.');
+  await refreshProtectedState();
+}
+
+async function submitPair(event) {
+  event.preventDefault();
+  const code = el('pair-code-input').value.trim();
+  if (!code) {
+    pushTranscriptLine('status   >', 'Pairing code required.');
+    return;
+  }
+  const response = await fetch('/api/auth/pair', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  if (!response.ok) {
+    pushTranscriptLine('error    >', 'Pairing code exchange failed.');
+    return;
+  }
+  const payload = await response.json();
+  setSessionToken(payload.session_token || '');
+  el('pair-form').reset();
+  pushTranscriptLine('status   >', 'Browser session paired successfully.');
+  await refreshProtectedState();
+}
+
+async function handleProtectedError(error) {
+  if (error && error.code === 401) {
+    setSessionToken('');
+    clearProtectedViews();
+    renderTranscript();
+    updateHealthBadge('auth required');
+    pushTranscriptLine('status   >', 'Browser session expired or auth required.');
+    return;
+  }
+  updateHealthBadge('gateway error');
+  console.error(error);
+}
+
 async function boot() {
+  state.authRequired = el('app-shell').dataset.authRequired === 'true';
+  state.sessionToken = window.sessionStorage.getItem(STORAGE_KEY) || '';
   el('run-form').addEventListener('submit', submitRun);
-  await refreshHealth();
-  await refreshRuns();
+  el('login-form').addEventListener('submit', submitLogin);
+  el('pair-form').addEventListener('submit', submitPair);
+  el('logout-button').addEventListener('click', () => {
+    setSessionToken('');
+    clearProtectedViews();
+    renderTranscript();
+    updateHealthBadge(state.authRequired ? 'auth required' : 'ok');
+    pushTranscriptLine('status   >', 'Browser session cleared.');
+  });
+  renderAuthPanel();
   renderTranscript();
   renderEvents([]);
+  renderRuns();
+  if (authSatisfied()) {
+    await refreshProtectedState();
+  } else {
+    updateHealthBadge('auth required');
+  }
   setInterval(() => {
-    refreshEvents().catch((error) => {
-      el('health-badge').textContent = 'gateway error';
-      console.error(error);
-    });
+    refreshEvents().catch(handleProtectedError);
   }, 1500);
   setInterval(() => {
-    refreshRuns().catch(console.error);
-    refreshHealth().catch(console.error);
+    refreshRuns().catch(handleProtectedError);
+    refreshHealth().catch(handleProtectedError);
   }, 4000);
 }
 
 window.addEventListener('load', () => {
-  boot().catch((error) => {
-    el('health-badge').textContent = 'boot failed';
-    console.error(error);
-  });
+  boot().catch(handleProtectedError);
 });
-"""
+""".replace('__AUTH_REQUIRED__', 'true' if auth_required else 'false')

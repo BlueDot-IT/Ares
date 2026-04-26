@@ -7,6 +7,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from ares.engagement_memory import write_engagement_memory
 from ares.reporting.markdown import render_session_report
 from ares.state.db import StateDB
 
@@ -36,6 +37,8 @@ class HookManager:
                 report_path = reports_dir / f"session-{int(session_id)}.md"
                 report_path.write_text(render_session_report(state_db, int(session_id)), encoding="utf-8")
                 payload["report_path"] = str(report_path)
+        if payload.get("type") in {"session_finished", "session_failed"} and payload.get("session_id") is not None:
+            payload["engagement_memory_path"] = str(write_engagement_memory(self.home, payload))
         results: list[HookInvocationResult] = []
         for name, module in self._hooks:
             handled_events = getattr(module, "HANDLED_EVENTS", ())

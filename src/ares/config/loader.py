@@ -2,18 +2,26 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ares.llm.provider_catalog import (
+    DEFAULT_LOCAL_OPENAI_BASE_URL,
+    DEFAULT_OPENAI_CLOUD_BASE_URL,
+    build_profile_presets,
+)
 from ares.llm.providers import provider_default_base_url, provider_exists, resolve_provider
 from ares.policy.roe import ROEProfileRegistry
+from ares.secure_files import write_private_text
 from ares.themes import DEFAULT_THEME, normalize_theme
 
 
 DEFAULT_LLM_PROVIDER = "openai"
 DEFAULT_LLM_MODEL = "local-model"
-DEFAULT_OPENAI_BASE_URL = "http://127.0.0.1:1234/v1"
+DEFAULT_LLM_AUTH_MODE = "api-key"
+DEFAULT_OPENAI_BASE_URL = DEFAULT_LOCAL_OPENAI_BASE_URL
 DEFAULT_HOME = "~/.ares"
 DEFAULT_MODE = "safe-active"
 DEFAULT_GATEWAY_MODE = "loopback"
@@ -26,28 +34,7 @@ GATEWAY_MODE_PRESETS: dict[str, dict[str, str]] = {
     "exposed": {"host": "0.0.0.0", "exposure": "remote"},
 }
 
-LLM_PROFILE_PRESETS: dict[str, dict[str, str]] = {
-    "local": {
-        "provider": "openai",
-        "model": "local-model",
-        "openai_base_url": DEFAULT_OPENAI_BASE_URL,
-    },
-    "openrouter": {
-        "provider": "openrouter",
-        "model": "openai/gpt-4o-mini",
-        "openai_base_url": "https://openrouter.ai/api/v1",
-    },
-    "anthropic": {
-        "provider": "anthropic",
-        "model": "claude-3-7-sonnet-latest",
-        "openai_base_url": "",
-    },
-    "gemini": {
-        "provider": "gemini",
-        "model": "gemini-2.5-pro",
-        "openai_base_url": "",
-    },
-}
+LLM_PROFILE_PRESETS: dict[str, dict[str, str]] = build_profile_presets()
 
 
 @dataclass(frozen=True)
@@ -56,6 +43,10 @@ class LLMConfig:
     model: str = DEFAULT_LLM_MODEL
     openai_base_url: str = DEFAULT_OPENAI_BASE_URL
     fallbacks: tuple[str, ...] = ()
+    auth_mode: str = DEFAULT_LLM_AUTH_MODE
+    oauth_token_command: str = ""
+    oauth_project: str = ""
+    oauth_location: str = ""
 
 
 @dataclass(frozen=True)
@@ -82,6 +73,9 @@ class GatewayConfig:
     host: str = DEFAULT_GATEWAY_HOST
     port: int = DEFAULT_GATEWAY_PORT
     exposure: str = "loopback-only"
+    auth_enabled: bool = False
+    operator_token: str = ""
+    allow_cidrs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,6 +90,8 @@ class AgentProfileConfig:
     max_risk: str | None = None
     allow_private_only: bool | None = None
     roe_profile: str | None = None
+    prompt_prefix: str | None = None
+    memory_tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -104,6 +100,8 @@ class AgentRouteConfig:
     target_schemes: tuple[str, ...] = ()
     target_contains: tuple[str, ...] = ()
     match_private: bool | None = None
+    prompt_contains: tuple[str, ...] = ()
+    roe_profiles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -182,9 +180,7 @@ def _load_config_document(home: Path | str | None = None) -> dict[str, Any]:
 
 def _write_config_document(document: dict[str, Any], *, home: Path | str | None = None) -> Path:
     path = config_file_path(home)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return path
+    return write_private_text(path, json.dumps(document, indent=2, sort_keys=True) + "\n")
 
 
 def _normalize_provider_or_raise(provider: str | None) -> str:
@@ -194,6 +190,21 @@ def _normalize_provider_or_raise(provider: str | None) -> str:
     if not provider_exists(normalized):
         raise ValueError(f"unknown provider: {provider}")
     return resolve_provider(normalized).name
+
+
+def _normalize_auth_mode(value: str | None) -> str:
+    normalized = str(value or DEFAULT_LLM_AUTH_MODE).strip().lower().replace("_", "-")
+    aliases = {
+        "apikey": "api-key",
+        "api-key": "api-key",
+        "api_key": "api-key",
+        "key": "api-key",
+        "oauth2": "oauth",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in {"api-key", "oauth"}:
+        raise ValueError(f"unknown auth mode: {value}")
+    return normalized
 
 
 def _normalize_fallbacks(values: Any) -> tuple[str, ...]:
@@ -251,6 +262,10 @@ def save_llm_config(
     openai_base_url: str | None = None,
     fallbacks: list[str] | tuple[str, ...] | None = None,
     profile: str | None = None,
+    auth_mode: str | None = None,
+    oauth_token_command: str | None = None,
+    oauth_project: str | None = None,
+    oauth_location: str | None = None,
 ) -> Path:
     document = _load_config_document(home)
     llm = document.get("llm")
@@ -283,13 +298,51 @@ def save_llm_config(
             llm["fallbacks"] = normalized_fallbacks
         else:
             llm.pop("fallbacks", None)
+
+    normalized_auth_mode: str | None = None
+    if auth_mode is not None:
+        normalized_auth_mode = _normalize_auth_mode(auth_mode)
+    elif any(value is not None for value in (oauth_token_command, oauth_project, oauth_location)):
+        normalized_auth_mode = "oauth"
+
+    if normalized_auth_mode is not None:
+        llm["auth_mode"] = normalized_auth_mode
+    elif "auth_mode" in llm:
+        llm["auth_mode"] = _normalize_auth_mode(str(llm.get("auth_mode", DEFAULT_LLM_AUTH_MODE)))
+
+    if oauth_token_command is not None:
+        value = oauth_token_command.strip()
+        if value:
+            llm["oauth_token_command"] = value
+        else:
+            llm.pop("oauth_token_command", None)
+    if oauth_project is not None:
+        value = oauth_project.strip()
+        if value:
+            llm["oauth_project"] = value
+        else:
+            llm.pop("oauth_project", None)
+    if oauth_location is not None:
+        value = oauth_location.strip()
+        if value:
+            llm["oauth_location"] = value
+        else:
+            llm.pop("oauth_location", None)
+
+    effective_auth_mode = _normalize_auth_mode(str(llm.get("auth_mode", DEFAULT_LLM_AUTH_MODE)))
+    if effective_auth_mode != "oauth":
+        llm["auth_mode"] = "api-key"
+        llm.pop("oauth_token_command", None)
+        llm.pop("oauth_project", None)
+        llm.pop("oauth_location", None)
+
     if profile is not None:
         normalized_profile = profile.strip().lower()
         if normalized_profile:
             llm["profile"] = normalized_profile
         else:
             llm.pop("profile", None)
-    elif any(value is not None for value in (provider, model, openai_base_url, fallbacks)):
+    elif any(value is not None for value in (provider, model, openai_base_url, fallbacks, auth_mode, oauth_token_command, oauth_project, oauth_location)):
         llm.pop("profile", None)
     document["llm"] = llm
     return _write_config_document(document, home=home)
@@ -304,6 +357,10 @@ def apply_llm_profile(*, home: Path | str | None = None, profile: str) -> Path:
         openai_base_url=preset.get("openai_base_url", ""),
         fallbacks=[],
         profile=profile,
+        auth_mode="api-key",
+        oauth_token_command="",
+        oauth_project="",
+        oauth_location="",
     )
 
 
@@ -324,12 +381,26 @@ def save_ui_config(*, home: Path | str | None = None, theme: str | None = None) 
     return _write_config_document(document, home=home)
 
 
+def save_hooks_config(*, home: Path | str | None = None, auto_report_on_finish: bool | None = None) -> Path:
+    document = _load_config_document(home)
+    hooks = document.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+    if auto_report_on_finish is not None:
+        hooks["auto_report_on_finish"] = bool(auto_report_on_finish)
+    document["hooks"] = hooks
+    return _write_config_document(document, home=home)
+
+
 def save_gateway_config(
     *,
     home: Path | str | None = None,
     mode: str | None = None,
     host: str | None = None,
     port: int | None = None,
+    auth_enabled: bool | None = None,
+    operator_token: str | None = None,
+    allow_cidrs: list[str] | tuple[str, ...] | None = None,
 ) -> Path:
     document = _load_config_document(home)
     gateway = document.get("gateway")
@@ -344,6 +415,18 @@ def save_gateway_config(
         gateway["host"] = gateway_mode_defaults(effective_mode)["host"]
     if port is not None:
         gateway["port"] = int(port)
+    if auth_enabled is not None:
+        gateway["auth_enabled"] = bool(auth_enabled)
+    if operator_token is not None:
+        gateway["operator_token"] = operator_token.strip()
+    if bool(gateway.get("auth_enabled", False)) and not str(gateway.get("operator_token", "")).strip():
+        gateway["operator_token"] = secrets.token_urlsafe(32)
+    if allow_cidrs is not None:
+        normalized_allow_cidrs = list(_normalize_strings(allow_cidrs))
+        if normalized_allow_cidrs:
+            gateway["allow_cidrs"] = normalized_allow_cidrs
+        else:
+            gateway.pop("allow_cidrs", None)
     document["gateway"] = gateway
     return _write_config_document(document, home=home)
 
@@ -368,6 +451,8 @@ def _load_agent_profiles(document: dict[str, Any]) -> AgentsConfig:
             max_risk=str(values.get("max_risk")).strip() if values.get("max_risk") else None,
             allow_private_only=bool(values.get("allow_private_only")) if values.get("allow_private_only") is not None else None,
             roe_profile=str(values.get("roe_profile")).strip() if values.get("roe_profile") else None,
+            prompt_prefix=str(values.get("prompt_prefix")).strip() if values.get("prompt_prefix") else None,
+            memory_tags=_normalize_strings(values.get("memory_tags")),
         )
     if "default" not in profiles:
         profiles["default"] = AgentProfileConfig(name="default")
@@ -378,6 +463,8 @@ def _load_agent_profiles(document: dict[str, Any]) -> AgentsConfig:
             target_schemes=_normalize_strings(item.get("target_schemes")),
             target_contains=_normalize_strings(item.get("target_contains")),
             match_private=item.get("match_private") if item.get("match_private") in {True, False} else None,
+            prompt_contains=_normalize_strings(item.get("prompt_contains")),
+            roe_profiles=_normalize_strings(item.get("roe_profiles")),
         )
         for item in raw_routes
         if isinstance(item, dict)
@@ -408,6 +495,10 @@ def load_config(home: Path | str | None = None) -> AppConfig:
             str(persisted_llm.get("openai_base_url", default_base_url)),
         ),
         fallbacks=_normalize_fallbacks(persisted_llm.get("fallbacks")),
+        auth_mode=_normalize_auth_mode(os.getenv("ARES_LLM_AUTH_MODE", str(persisted_llm.get("auth_mode", DEFAULT_LLM_AUTH_MODE)))),
+        oauth_token_command=os.getenv("ARES_LLM_OAUTH_TOKEN_COMMAND", str(persisted_llm.get("oauth_token_command", ""))).strip(),
+        oauth_project=os.getenv("ARES_LLM_OAUTH_PROJECT", str(persisted_llm.get("oauth_project", ""))).strip(),
+        oauth_location=os.getenv("ARES_LLM_OAUTH_LOCATION", str(persisted_llm.get("oauth_location", ""))).strip(),
     )
     default_mode = os.getenv("ARES_DEFAULT_MODE", DEFAULT_MODE)
     roe_profile = os.getenv("ARES_ROE_PROFILE", default_mode)
@@ -427,6 +518,9 @@ def load_config(home: Path | str | None = None) -> AppConfig:
         host=os.getenv("ARES_GATEWAY_HOST", str(persisted_gateway.get("host", gateway_defaults["host"]))),
         port=int(os.getenv("ARES_GATEWAY_PORT", str(persisted_gateway.get("port", DEFAULT_GATEWAY_PORT)))),
         exposure=str(gateway_defaults["exposure"]),
+        auth_enabled=_env_bool("ARES_GATEWAY_AUTH_ENABLED", bool(persisted_gateway.get("auth_enabled", False))),
+        operator_token=os.getenv("ARES_GATEWAY_OPERATOR_TOKEN", str(persisted_gateway.get("operator_token", ""))),
+        allow_cidrs=_normalize_strings(persisted_gateway.get("allow_cidrs")),
     )
     agents = _load_agent_profiles(document)
     return AppConfig(home=resolved_home, llm=llm, policy=policy, ui=ui, hooks=hooks, gateway=gateway, agents=agents)

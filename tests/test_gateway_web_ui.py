@@ -4,6 +4,7 @@ import tempfile
 import threading
 import types
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -11,6 +12,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 class GatewayWebUiTests(unittest.TestCase):
+    def _json_request(self, url: str, *, method: str = "GET", payload: dict | None = None, headers: dict[str, str] | None = None):
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json", **(headers or {})},
+            method=method,
+        )
+        return urllib.request.urlopen(request, timeout=2)
+
     def test_http_gateway_serves_web_ui_shell_and_assets(self):
         from ares.gateway import AresGateway, start_gateway_server
 
@@ -95,6 +106,68 @@ class GatewayWebUiTests(unittest.TestCase):
         self.assertEqual(run_payload["requested_agent"], "web-console")
         self.assertTrue(any(event["type"] == "tool_call" for event in events["events"]))
         self.assertTrue(any(event["type"] == "session_finished" for event in events["events"]))
+
+    def test_exposed_auth_mode_serves_login_ready_ui_and_allows_bearer_bootstrap(self):
+        from ares.config.loader import AppConfig, GatewayConfig, LLMConfig, PolicyConfig
+        from ares.gateway import AresGateway, start_gateway_server
+
+        def fake_runner(**kwargs):
+            kwargs["session_started_callback"](88)
+            kwargs["event_callback"]({"type": "final_response", "final_response": "ok", "message": "ok"})
+            return types.SimpleNamespace(final_response="ok", stop_reason="final_response")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AppConfig(
+                home=Path(tmp),
+                llm=LLMConfig(model="unit-model"),
+                policy=PolicyConfig(max_risk="passive"),
+                gateway=GatewayConfig(
+                    mode="exposed",
+                    host="127.0.0.1",
+                    port=0,
+                    exposure="remote",
+                    auth_enabled=True,
+                    operator_token="operator-secret",
+                    allow_cidrs=("127.0.0.1/32",),
+                ),
+            )
+            gateway = AresGateway(config=config, runner=fake_runner)
+            server = start_gateway_server(gateway, host="127.0.0.1", port=0, mode="exposed")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base = f"http://127.0.0.1:{server.server_address[1]}"
+                html = urllib.request.urlopen(base + "/", timeout=2).read().decode("utf-8")
+                js = urllib.request.urlopen(base + "/app.js", timeout=2).read().decode("utf-8")
+                with self.assertRaises(urllib.error.HTTPError) as denied:
+                    urllib.request.urlopen(base + "/health", timeout=2)
+                self.assertEqual(denied.exception.code, 401)
+                login = json.loads(
+                    self._json_request(
+                        base + "/api/auth/login",
+                        method="POST",
+                        payload={"operator_token": "operator-secret"},
+                    ).read().decode("utf-8")
+                )
+                session_token = login["session_token"]
+                health = json.loads(
+                    self._json_request(
+                        base + "/health",
+                        headers={"Authorization": f"Bearer {session_token}"},
+                    ).read().decode("utf-8")
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+        self.assertIn('id="auth-panel"', html)
+        self.assertIn('id="pair-code-input"', html)
+        self.assertIn('id="pair-button"', html)
+        self.assertIn('/api/auth/login', js)
+        self.assertIn('/api/auth/pair', js)
+        self.assertIn('Authorization', js)
+        self.assertEqual(health["status"], "ok")
 
 
 if __name__ == "__main__":

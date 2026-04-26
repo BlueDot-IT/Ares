@@ -5,6 +5,7 @@ from typing import Any
 
 from .base import ModelResponse, ToolCall
 from .common import emit_text_stream, get_field, parse_json_object, to_text
+from .oauth import build_google_oauth_credentials
 
 
 class GeminiModel:
@@ -16,10 +17,23 @@ class GeminiModel:
         api_key: str | None = None,
         provider: str = "gemini",
         temperature: float = 0,
+        auth_mode: str = "api-key",
+        oauth_token_command: str = "",
+        oauth_project: str = "",
+        oauth_location: str = "",
+        home: Any | None = None,
     ) -> None:
         self.model = model
         self.provider = provider
-        self.client = client or self._create_client(api_key=api_key)
+        self.client = client or self._create_client(
+            api_key=api_key,
+            auth_mode=auth_mode,
+            oauth_token_command=oauth_token_command,
+            oauth_project=oauth_project,
+            oauth_location=oauth_location,
+            home=home,
+            provider=provider,
+        )
         self.temperature = temperature
 
     def complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> ModelResponse:
@@ -43,13 +57,36 @@ class GeminiModel:
         return response
 
     @classmethod
-    def _create_client(cls, *, api_key: str | None) -> Any:
+    def _create_client(
+        cls,
+        *,
+        api_key: str | None,
+        auth_mode: str = "api-key",
+        oauth_token_command: str = "",
+        oauth_project: str = "",
+        oauth_location: str = "",
+        home: Any | None = None,
+        provider: str = "gemini",
+    ) -> Any:
         try:
             from google import genai
         except Exception as exc:  # pragma: no cover - only hit without dependency
             raise RuntimeError("google-genai package is required for GeminiModel") from exc
         kwargs: dict[str, Any] = {}
-        if api_key is not None:
+        if auth_mode == "oauth":
+            if not oauth_project.strip():
+                raise RuntimeError("Gemini OAuth requires an OAuth project")
+            if not oauth_location.strip():
+                raise RuntimeError("Gemini OAuth requires an OAuth location")
+            kwargs["vertexai"] = True
+            kwargs["project"] = oauth_project.strip()
+            kwargs["location"] = oauth_location.strip()
+            kwargs["credentials"] = build_google_oauth_credentials(
+                oauth_token_command,
+                home=home,
+                provider=provider,
+            )
+        elif api_key is not None:
             kwargs["api_key"] = api_key
         return genai.Client(**kwargs)
 

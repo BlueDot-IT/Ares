@@ -19,6 +19,7 @@ from .loader import (
     resolve_home,
     resolve_llm_profile,
     save_gateway_config,
+    save_hooks_config,
     save_llm_config,
     save_ui_config,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "resolve_home",
     "resolve_llm_profile",
     "save_gateway_config",
+    "save_hooks_config",
     "save_llm_config",
     "save_ui_config",
 ]

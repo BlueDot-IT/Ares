@@ -184,7 +184,7 @@ class ModelFallbackTests(unittest.TestCase):
         from ares.config.loader import AppConfig, LLMConfig, PolicyConfig
         from ares.run import build_model
 
-        def fake_build_single_model(*, provider: str, model: str, openai_base_url: str):
+        def fake_build_single_model(*, provider: str, model: str, openai_base_url: str, **_: object):
             if provider == "openai":
                 raise RuntimeError("openai package is required")
             return _StubModel(responses=[ModelResponse(final_text="fallback survived init error")])
