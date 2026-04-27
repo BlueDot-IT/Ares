@@ -90,13 +90,20 @@ The legacy `oauth_token_command` path still exists as a fallback for environment
 
 ## Environment variables
 
-API-key auth uses the existing provider-specific environment variables:
+API-key auth uses provider-specific environment variables. Ares loads `~/.ares/.env` before reading config and before building model clients; real process environment variables still win over values from that file for the same variable name. Provider-specific aliases keep their usual priority, so `ARES_OPENAI_API_KEY` is still the Ares-specific override ahead of the standard `OPENAI_API_KEY`.
 
 ```bash
-export ARES_OPENAI_API_KEY="..."
-export ARES_OPENROUTER_API_KEY="..."
-export ARES_ANTHROPIC_API_KEY="..."
-export ARES_GEMINI_API_KEY="..."
+# ~/.ares/.env
+OPENAI_API_KEY="..."
+ARES_OPENROUTER_API_KEY="..."
+ARES_ANTHROPIC_API_KEY="..."
+ARES_GEMINI_API_KEY="..."
+```
+
+The OpenAI-compatible adapter accepts both `ARES_OPENAI_API_KEY` and the standard `OPENAI_API_KEY`. Use `ARES_OPENAI_API_KEY` when you want an Ares-specific override, or `OPENAI_API_KEY` when you want the standard OpenAI SDK variable. Keep this file private because it can contain API keys:
+
+```bash
+chmod 600 ~/.ares/.env
 ```
 
 For local OpenAI-compatible servers that do not require a real key, use a placeholder if the upstream client requires one.

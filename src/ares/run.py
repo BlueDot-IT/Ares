@@ -9,7 +9,7 @@ from ares.agent.context_builder import ContextBuilder
 from ares.agent.dispatcher import ToolDispatcher
 from ares.agent.prompt_builder import PromptBuilder
 from ares.agent.runtime import AgentRuntime, ModelClient, RuntimeResult
-from ares.config.loader import AppConfig, DEFAULT_OPENAI_BASE_URL, config_file_path, infer_llm_profile, load_config
+from ares.config.loader import AppConfig, DEFAULT_OPENAI_BASE_URL, config_file_path, infer_llm_profile, load_config, load_home_env
 from ares.hooks import HookManager
 from ares.llm import AnthropicModel, GeminiModel, OpenAICompatModel, resolve_api_key, resolve_provider
 from ares.llm.failover import FailoverCandidate, FailoverModel
@@ -47,6 +47,7 @@ def _build_single_model(
     oauth_project: str = "",
     oauth_location: str = "",
 ) -> ModelClient:
+    load_home_env(home, override=False)
     spec = resolve_provider(provider)
     api_key = None if auth_mode == "oauth" else resolve_api_key(spec.name)
     if spec.family == "anthropic":

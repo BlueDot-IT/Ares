@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -297,6 +298,75 @@ class ModelConfigTests(unittest.TestCase):
         self.assertEqual(cfg.llm.oauth_token_command, "")
         self.assertEqual(cfg.llm.oauth_project, "")
         self.assertEqual(cfg.llm.oauth_location, "")
+    def test_load_config_loads_missing_values_from_home_dotenv_without_overriding_process_env(self):
+        from ares.config.loader import load_config
+
+        keys = ["ARES_HOME", "ARES_LLM_MODEL", "ARES_OPENAI_BASE_URL", "OPENAI_API_KEY", "ARES_OPENAI_API_KEY"]
+        old_values = {key: os.environ.get(key) for key in keys}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                (home / ".env").write_text(
+                    "ARES_LLM_MODEL=from-dotenv\n"
+                    "ARES_OPENAI_BASE_URL=https://dotenv.example/v1\n"
+                    "OPENAI_API_KEY=dotenv-openai-key\n",
+                    encoding="utf-8",
+                )
+                os.environ["ARES_HOME"] = tmp
+                os.environ["ARES_LLM_MODEL"] = "from-process"
+                for key in ("ARES_OPENAI_BASE_URL", "OPENAI_API_KEY", "ARES_OPENAI_API_KEY"):
+                    os.environ.pop(key, None)
+
+                cfg = load_config()
+
+                self.assertEqual(cfg.llm.model, "from-process")
+                self.assertEqual(cfg.llm.openai_base_url, "https://dotenv.example/v1")
+                self.assertEqual(os.environ.get("OPENAI_API_KEY"), "dotenv-openai-key")
+        finally:
+            for key, value in old_values.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_build_model_uses_openai_key_from_home_dotenv(self):
+        from ares.config.loader import AppConfig, LLMConfig, PolicyConfig
+        from ares.run import build_model
+
+        keys = ["OPENAI_API_KEY", "ARES_OPENAI_API_KEY"]
+        old_values = {key: os.environ.get(key) for key in keys}
+        captured: dict[str, str | None] = {}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                (home / ".env").write_text("OPENAI_API_KEY=dotenv-openai-key\n", encoding="utf-8")
+                for key in keys:
+                    os.environ.pop(key, None)
+                config = AppConfig(
+                    home=home,
+                    llm=LLMConfig(
+                        provider="openai",
+                        model="gpt-4.1-mini",
+                        openai_base_url="https://api.openai.com/v1",
+                    ),
+                    policy=PolicyConfig(),
+                )
+
+                def fake_create_client(**kwargs):
+                    captured["api_key"] = kwargs.get("api_key")
+                    return object()
+
+                with patch("ares.run.OpenAICompatModel._create_client", side_effect=fake_create_client):
+                    build_model(config)
+
+        finally:
+            for key, value in old_values.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual(captured["api_key"], "dotenv-openai-key")
 
 
 if __name__ == "__main__":

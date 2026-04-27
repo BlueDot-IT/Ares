@@ -17,6 +17,8 @@ from ares.policy.roe import ROEProfileRegistry
 from ares.secure_files import write_private_text
 from ares.themes import DEFAULT_THEME, normalize_theme
 
+_ENV_KEY_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")
+
 
 DEFAULT_LLM_PROVIDER = "openai"
 DEFAULT_LLM_MODEL = "local-model"
@@ -138,6 +140,55 @@ def resolve_home(home: Path | str | None = None) -> Path:
 
 def config_file_path(home: Path | str | None = None) -> Path:
     return resolve_home(home) / "config.json"
+
+
+def env_file_path(home: Path | str | None = None) -> Path:
+    return resolve_home(home) / ".env"
+
+
+def load_home_env(home: Path | str | None = None, *, override: bool = False) -> dict[str, str]:
+    """Load KEY=VALUE pairs from Ares' home .env into os.environ.
+
+    Values from the real process environment win by default. This keeps shell or
+    service-manager overrides authoritative while allowing ~/.ares/.env to carry
+    local provider credentials such as OPENAI_API_KEY.
+    """
+    path = env_file_path(home)
+    if not path.exists():
+        return {}
+    loaded: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    for raw_line in lines:
+        parsed = _parse_env_assignment(raw_line)
+        if parsed is None:
+            continue
+        key, value = parsed
+        if not override and key in os.environ:
+            continue
+        os.environ[key] = value
+        loaded[key] = value
+    return loaded
+
+
+def _parse_env_assignment(raw_line: str) -> tuple[str, str] | None:
+    line = str(raw_line or "").strip()
+    if not line or line.startswith("#"):
+        return None
+    if line.startswith("export "):
+        line = line[len("export ") :].strip()
+    if "=" not in line:
+        return None
+    key, value = line.split("=", 1)
+    key = key.strip()
+    if not key or any(char not in _ENV_KEY_CHARS for char in key) or key[0].isdigit():
+        return None
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    return key, value
 
 
 def available_llm_profiles() -> dict[str, dict[str, str]]:
@@ -477,6 +528,7 @@ def _load_agent_profiles(document: dict[str, Any]) -> AgentsConfig:
 def load_config(home: Path | str | None = None) -> AppConfig:
     """Load the first-pass Ares config from env, persisted config, and defaults."""
     resolved_home = resolve_home(home)
+    load_home_env(resolved_home, override=False)
     document = _load_config_document(resolved_home)
     persisted_llm = document.get("llm") if isinstance(document.get("llm"), dict) else {}
     persisted_ui = document.get("ui") if isinstance(document.get("ui"), dict) else {}
