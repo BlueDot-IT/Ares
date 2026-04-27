@@ -80,6 +80,31 @@ def _center_line(text: str, width: int) -> str:
     return _truncate(text, width).center(width)
 
 
+_PROMPT_TOOLKIT_COLOR_MAP = {
+    "default": "",
+    "black": "ansiblack",
+    "red": "ansired",
+    "green": "ansigreen",
+    "yellow": "ansiyellow",
+    "blue": "ansiblue",
+    "magenta": "ansimagenta",
+    "cyan": "ansicyan",
+    "white": "ansiwhite",
+}
+
+
+def _prompt_toolkit_tone_style(tone: Any) -> str:
+    parts: list[str] = []
+    fg = _PROMPT_TOOLKIT_COLOR_MAP.get(getattr(tone, "fg", "default"), "")
+    if fg:
+        parts.append(fg)
+    bg = _PROMPT_TOOLKIT_COLOR_MAP.get(getattr(tone, "bg", "default"), "")
+    if bg:
+        parts.append(f"bg:{bg}")
+    parts.extend(str(item) for item in getattr(tone, "attrs", ()) if item)
+    return " ".join(parts)
+
+
 STARTUP_BANNER_LINES = [
     "        ##                                                 ##",
     "     /####                                              /####",
@@ -1109,6 +1134,9 @@ class AresTUI:
             curses.wrapper(self._loop)
 
     def _prompt_toolkit_body_text(self, *, columns: int | None = None, rows: int | None = None) -> str:
+        return "".join(text for _, text in self._prompt_toolkit_body_fragments(columns=columns, rows=rows)).rstrip("\n")
+
+    def _prompt_toolkit_body_fragments(self, *, columns: int | None = None, rows: int | None = None) -> list[tuple[str, str]]:
         self._refresh_handles()
         if columns is None or rows is None:
             size = shutil.get_terminal_size((100, 30))
@@ -1119,7 +1147,24 @@ class AresTUI:
         frame_lines = self._frame_text(width=width).splitlines()
         if frame_lines:
             frame_lines = frame_lines[:-1]
-        return "\n".join(frame_lines[-height:])
+        visible_lines = frame_lines[-height:]
+        fragments: list[tuple[str, str]] = []
+        for index, line in enumerate(visible_lines):
+            fragments.append((f"class:{self._line_role(line)}", line))
+            if index < len(visible_lines) - 1:
+                fragments.append(("", "\n"))
+        return fragments
+
+    def _prompt_toolkit_style(self) -> Any:
+        from prompt_toolkit.styles import Style
+
+        theme = get_theme(self.config.ui.theme)
+        style_map = {
+            role: _prompt_toolkit_tone_style(tone)
+            for role, tone in theme.palette.items()
+        }
+        style_map["prompt"] = style_map.get("input", "")
+        return Style.from_dict(style_map)
 
     def _run_prompt_toolkit(self) -> None:
         from prompt_toolkit.application import Application
@@ -1127,6 +1172,7 @@ class AresTUI:
         from prompt_toolkit.layout import HSplit, Layout, Window
         from prompt_toolkit.layout.controls import FormattedTextControl
         from prompt_toolkit.layout.dimension import Dimension
+        from prompt_toolkit.styles import DynamicStyle
         from prompt_toolkit.widgets import TextArea
         try:
             from rich.console import Console
@@ -1135,8 +1181,8 @@ class AresTUI:
 
         console = Console(force_terminal=True, color_system="auto", width=120)
 
-        def body_text() -> str:
-            return self._prompt_toolkit_body_text()
+        def body_text() -> list[tuple[str, str]]:
+            return self._prompt_toolkit_body_fragments()
 
         body = Window(
             FormattedTextControl(lambda: body_text()),
@@ -1147,6 +1193,7 @@ class AresTUI:
             height=Dimension.exact(1),
             prompt=lambda: [("class:prompt", get_theme(self.config.ui.theme).prompt_prefix)],
             multiline=False,
+            style="class:input",
         )
         kb = KeyBindings()
 
@@ -1178,7 +1225,7 @@ class AresTUI:
             full_screen=True,
             refresh_interval=max(0.1, float(self.refresh_interval)),
             mouse_support=False,
-            style=None,
+            style=DynamicStyle(lambda: self._prompt_toolkit_style()),
         )
         app.run()
 

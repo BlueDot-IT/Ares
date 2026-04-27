@@ -328,14 +328,44 @@ class AresTuiTests(unittest.TestCase):
         self.assertNotIn("AUTONOMOUS PENTEST OPERATIONS", body)
         self.assertNotIn("ember    >", body)
 
-    def test_prompt_toolkit_shell_constructs_application(self):
+    def test_prompt_toolkit_body_fragments_apply_theme_roles(self):
         from ares.tui import AresTUI
 
         tui = AresTUI()
-        with patch("prompt_toolkit.application.Application.run", return_value=None) as run:
+        tui._append_transcript("user", "yo")
+        tui._append_transcript("assistant", "Visible final line")
+
+        fragments = tui._prompt_toolkit_body_fragments(columns=100, rows=10)
+
+        self.assertIn(("class:user", "operator > yo"), fragments)
+        self.assertIn(("class:assistant", "ares     > Visible final line"), fragments)
+        self.assertTrue(any(style == "class:separator" for style, _ in fragments))
+
+    def test_prompt_toolkit_style_uses_active_theme_palette(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        style = tui._prompt_toolkit_style()
+
+        style_map = dict(style.style_rules)
+        self.assertIn("assistant", style_map)
+        self.assertIn("ansiyellow", style_map["assistant"])
+        self.assertIn("tool", style_map)
+        self.assertIn("ansired", style_map["tool"])
+
+    def test_prompt_toolkit_shell_constructs_application_with_theme_style(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        with patch("prompt_toolkit.application.Application") as app_cls:
+            app = app_cls.return_value
             tui._run_prompt_toolkit()
 
-        run.assert_called_once()
+        app_cls.assert_called_once()
+        style = app_cls.call_args.kwargs.get("style")
+        self.assertIsNotNone(style)
+        self.assertEqual(type(style).__name__, "DynamicStyle")
+        app.run.assert_called_once()
 
     def test_select_neighbor_session_id_clamps_to_known_session_ids(self):
         from ares.tui import select_neighbor_session_id
