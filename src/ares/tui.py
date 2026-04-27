@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import curses
 import json
+import os
 import shutil
 import textwrap
 import threading
@@ -220,6 +221,7 @@ def build_help_text() -> str:
             "====",
             "Slash Commands",
             "/help               show this command reference",
+            "/commands           alias for /help",
             "/tools              list registered tools",
             "/sessions           list stored sessions",
             "/inspect [id]       inspect a session in detail",
@@ -230,6 +232,7 @@ def build_help_text() -> str:
             "/theme              show, preview, or switch among dark themes",
             "/report [id]        write a Markdown report for a session",
             "/target <scope>     set the default authorized target",
+            "/scope [mode]       toggle target scope: private or public",
             "/yolo               toggle dangerous-tool approval for new runs",
             "/clear              clear the transcript",
             "/quit               exit the operator shell",
@@ -285,19 +288,21 @@ def build_operator_shell_text(
     width: int = 100,
     yolo_mode: bool = False,
     theme_name: str = DEFAULT_THEME,
+    allow_private_only: bool = True,
 ) -> str:
     width = _fit_width(width)
     session_label = str(selected_session_id) if selected_session_id is not None else "-"
     job_status = background_job.status if background_job is not None else "idle"
     yolo_label = "ON" if yolo_mode else "off"
+    scope_label = "private" if allow_private_only else "public"
     theme = get_theme(theme_name)
     transcript_text = build_chat_transcript_text(transcript, width=width)
     separator = theme.separator * width
     lines = [
         build_startup_hero(width=width),
-        f"target: {target or '-'} | theme: {theme.name} | session: {session_label} | job: {job_status} | yolo: {yolo_label}",
+        f"target: {target or '-'} | scope: {scope_label} | theme: {theme.name} | session: {session_label} | job: {job_status} | yolo: {yolo_label}",
         f"status: {status_message}",
-        "commands: /help /tools /sessions /inspect /messages /live /doctor /model /theme /target /yolo /report /clear /quit",
+        "commands: type /commands for a list",
         separator,
         transcript_text,
         separator,
@@ -748,6 +753,7 @@ class AresTUI:
             width=width,
             yolo_mode=self.state.approve_dangerous,
             theme_name=self.config.ui.theme,
+            allow_private_only=self.config.policy.allow_private_only,
         )
 
     def _start_background_run(self, prompt: str) -> None:
@@ -906,6 +912,27 @@ class AresTUI:
         self.state.status_message = f"theme set: {self.config.ui.theme}"
         self._append_transcript("system", f"theme set: {self.config.ui.theme}")
 
+    def _handle_scope_command(self, arg: str) -> None:
+        requested = arg.strip().lower()
+        current_private_only = bool(self.config.policy.allow_private_only)
+        if requested in {"public", "remote", "off", "false", "no"}:
+            private_only = False
+        elif requested in {"private", "private-only", "on", "true", "yes"}:
+            private_only = True
+        elif not requested:
+            private_only = not current_private_only
+        else:
+            self._append_transcript("system", "usage: /scope [public|private]")
+            return
+        os.environ["ARES_ALLOW_PRIVATE_ONLY"] = "true" if private_only else "false"
+        self.config = load_config(self.config.home)
+        if private_only:
+            self.state.status_message = "scope: private-only"
+            self._append_transcript("system", "scope policy: private-only targets only")
+        else:
+            self.state.status_message = "scope: public targets allowed"
+            self._append_transcript("system", "scope policy: public targets allowed for authorized engagements")
+
     def _handle_slash_command(self, text: str) -> None:
         command_line = text[1:].strip()
         if not command_line:
@@ -954,6 +981,9 @@ class AresTUI:
             return
         if command == "theme":
             self._handle_theme_command(arg)
+            return
+        if command == "scope":
+            self._handle_scope_command(arg)
             return
         if command == "target":
             if arg.strip():

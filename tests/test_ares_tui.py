@@ -124,11 +124,13 @@ class AresTuiTests(unittest.TestCase):
 
         self.assertIn("Slash Commands", help_text)
         self.assertIn("/help", help_text)
+        self.assertIn("/commands", help_text)
         self.assertIn("/tools", help_text)
         self.assertIn("/sessions", help_text)
         self.assertIn("/doctor", help_text)
         self.assertIn("/model", help_text)
         self.assertIn("/theme", help_text)
+        self.assertIn("/scope", help_text)
         self.assertIn("/clear", help_text)
         self.assertIn("PageUp/PageDown", help_text)
         self.assertIn("Home jumps to oldest", help_text)
@@ -158,6 +160,9 @@ class AresTuiTests(unittest.TestCase):
 
         self.assertIn("ARES", shell)
         self.assertIn("target: corp.example", shell)
+        self.assertIn("scope: private", shell)
+        self.assertIn("commands: type /commands for a list", shell)
+        self.assertNotIn("/sessions /inspect /messages", shell)
         self.assertIn("theme: ember", shell)
         self.assertIn("session: 12", shell)
         self.assertIn("job: running", shell)
@@ -201,6 +206,58 @@ class AresTuiTests(unittest.TestCase):
         tui._handle_slash_command("/yolo")
         self.assertFalse(tui.state.approve_dangerous)
         self.assertIn("dangerous-tool approval disabled", tui.state.transcript[-1]["text"])
+
+    def test_scope_command_toggles_public_target_policy_for_authorized_vps(self):
+        from ares.tui import AresTUI
+
+        old_home = os.environ.get("ARES_HOME")
+        old_scope = os.environ.get("ARES_ALLOW_PRIVATE_ONLY")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["ARES_HOME"] = tmp
+                os.environ["ARES_ALLOW_PRIVATE_ONLY"] = "true"
+                tui = AresTUI()
+
+                tui._handle_slash_command("/scope public")
+
+                self.assertEqual(os.environ["ARES_ALLOW_PRIVATE_ONLY"], "false")
+                self.assertFalse(tui.config.policy.allow_private_only)
+                self.assertIn("public targets allowed", tui.state.transcript[-1]["text"])
+
+                shell = tui._frame_text(width=100)
+                self.assertIn("scope: public", shell)
+
+                tui._handle_slash_command("/scope private")
+
+                self.assertEqual(os.environ["ARES_ALLOW_PRIVATE_ONLY"], "true")
+                self.assertTrue(tui.config.policy.allow_private_only)
+                self.assertIn("private-only", tui.state.transcript[-1]["text"])
+
+                tui._handle_slash_command("/scope")
+                self.assertEqual(os.environ["ARES_ALLOW_PRIVATE_ONLY"], "false")
+                self.assertFalse(tui.config.policy.allow_private_only)
+
+                tui._handle_slash_command("/scope banana")
+                self.assertEqual(os.environ["ARES_ALLOW_PRIVATE_ONLY"], "false")
+                self.assertIn("usage: /scope", tui.state.transcript[-1]["text"])
+        finally:
+            if old_home is None:
+                os.environ.pop("ARES_HOME", None)
+            else:
+                os.environ["ARES_HOME"] = old_home
+            if old_scope is None:
+                os.environ.pop("ARES_ALLOW_PRIVATE_ONLY", None)
+            else:
+                os.environ["ARES_ALLOW_PRIVATE_ONLY"] = old_scope
+
+    def test_commands_alias_shows_help_text(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        tui._handle_slash_command("/commands")
+
+        self.assertIn("Slash Commands", tui.state.transcript[-1]["text"])
+        self.assertIn("/scope", tui.state.transcript[-1]["text"])
 
     def test_model_command_updates_persisted_settings_and_reports_current_model(self):
         from ares.config.loader import AppConfig, LLMConfig, PolicyConfig, load_config
