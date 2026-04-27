@@ -130,6 +130,8 @@ class AresTuiTests(unittest.TestCase):
         self.assertIn("/model", help_text)
         self.assertIn("/theme", help_text)
         self.assertIn("/clear", help_text)
+        self.assertIn("PageUp/PageDown", help_text)
+        self.assertIn("Home jumps to oldest", help_text)
         self.assertIn("/quit", help_text)
 
     def test_build_operator_shell_text_renders_chat_transcript_and_inline_tool_chain(self):
@@ -340,6 +342,40 @@ class AresTuiTests(unittest.TestCase):
         self.assertIn(("class:user", "operator > yo"), fragments)
         self.assertIn(("class:assistant", "ares     > Visible final line"), fragments)
         self.assertTrue(any(style == "class:separator" for style, _ in fragments))
+
+    def test_prompt_toolkit_body_can_scroll_back_and_return_to_latest(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        for index in range(30):
+            tui._append_transcript("assistant", f"line-{index:02d}")
+
+        latest = tui._prompt_toolkit_body_text(columns=100, rows=8)
+        self.assertIn("line-29", latest)
+
+        tui._scroll_body(delta=8, columns=100, rows=8)
+        older = tui._prompt_toolkit_body_text(columns=100, rows=8)
+
+        self.assertNotIn("line-29", older)
+        self.assertIn("line-21", older)
+
+        tui._scroll_body(delta=-8, columns=100, rows=8)
+        latest_again = tui._prompt_toolkit_body_text(columns=100, rows=8)
+
+        self.assertIn("line-29", latest_again)
+
+    def test_prompt_toolkit_shell_binds_page_keys_for_scrollback(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        with patch("prompt_toolkit.application.Application") as app_cls:
+            tui._run_prompt_toolkit()
+
+        bindings = app_cls.call_args.kwargs["key_bindings"].bindings
+        keys = {tuple(getattr(key, "value", str(key)) for key in binding.keys) for binding in bindings}
+        self.assertIn(("pageup",), keys)
+        self.assertIn(("pagedown",), keys)
+        self.assertIn(("end",), keys)
 
     def test_prompt_toolkit_style_uses_active_theme_palette(self):
         from ares.tui import AresTUI

@@ -62,6 +62,7 @@ class AresTUIState:
     processed_event_count: int = 0
     active_stream_index: int | None = None
     active_stream_provider: str | None = None
+    scrollback_offset: int = 0
     should_exit: bool = False
 
 
@@ -236,6 +237,7 @@ def build_help_text() -> str:
             "Chat Flow",
             "- Type a normal message to launch a run.",
             "- Tool calls and results stream inline in the transcript.",
+            "- PageUp/PageDown scroll transcript history; Home jumps to oldest; End returns to latest output.",
             "- Reports are written under ARES_HOME/reports.",
         ]
     )
@@ -985,6 +987,7 @@ class AresTUI:
         self.state.input_buffer = ""
         if not text:
             return
+        self.state.scrollback_offset = 0
         if text.startswith("/"):
             self._handle_slash_command(text)
             return
@@ -1136,18 +1139,37 @@ class AresTUI:
     def _prompt_toolkit_body_text(self, *, columns: int | None = None, rows: int | None = None) -> str:
         return "".join(text for _, text in self._prompt_toolkit_body_fragments(columns=columns, rows=rows)).rstrip("\n")
 
-    def _prompt_toolkit_body_fragments(self, *, columns: int | None = None, rows: int | None = None) -> list[tuple[str, str]]:
-        self._refresh_handles()
-        if columns is None or rows is None:
-            size = shutil.get_terminal_size((100, 30))
-            columns = size.columns if columns is None else columns
-            rows = size.lines if rows is None else rows
+    def _prompt_toolkit_frame_lines(self, *, columns: int | None = None) -> tuple[list[str], int]:
+        if columns is None:
+            columns = shutil.get_terminal_size((100, 30)).columns
         width = min(120, max(72, int(columns) - 1))
-        height = max(1, int(rows) - 1)
         frame_lines = self._frame_text(width=width).splitlines()
         if frame_lines:
             frame_lines = frame_lines[:-1]
-        visible_lines = frame_lines[-height:]
+        return frame_lines, width
+
+    def _prompt_toolkit_visible_lines(self, *, columns: int | None = None, rows: int | None = None) -> list[str]:
+        self._refresh_handles()
+        if rows is None:
+            rows = shutil.get_terminal_size((100, 30)).lines
+        height = max(1, int(rows) - 1)
+        frame_lines, _ = self._prompt_toolkit_frame_lines(columns=columns)
+        max_offset = max(0, len(frame_lines) - height)
+        self.state.scrollback_offset = max(0, min(int(self.state.scrollback_offset), max_offset))
+        end = len(frame_lines) - self.state.scrollback_offset
+        start = max(0, end - height)
+        return frame_lines[start:end]
+
+    def _scroll_body(self, *, delta: int, columns: int | None = None, rows: int | None = None) -> None:
+        if rows is None:
+            rows = shutil.get_terminal_size((100, 30)).lines
+        height = max(1, int(rows) - 1)
+        frame_lines, _ = self._prompt_toolkit_frame_lines(columns=columns)
+        max_offset = max(0, len(frame_lines) - height)
+        self.state.scrollback_offset = max(0, min(max_offset, int(self.state.scrollback_offset) + int(delta)))
+
+    def _prompt_toolkit_body_fragments(self, *, columns: int | None = None, rows: int | None = None) -> list[tuple[str, str]]:
+        visible_lines = self._prompt_toolkit_visible_lines(columns=columns, rows=rows)
         fragments: list[tuple[str, str]] = []
         for index, line in enumerate(visible_lines):
             fragments.append((f"class:{self._line_role(line)}", line))
@@ -1212,6 +1234,22 @@ class AresTUI:
         @kb.add("down")
         def _(event: Any) -> None:
             self._move_selection(1)
+
+        @kb.add("pageup")
+        def _(event: Any) -> None:
+            self._scroll_body(delta=max(1, shutil.get_terminal_size((100, 30)).lines - 3))
+
+        @kb.add("pagedown")
+        def _(event: Any) -> None:
+            self._scroll_body(delta=-max(1, shutil.get_terminal_size((100, 30)).lines - 3))
+
+        @kb.add("home")
+        def _(event: Any) -> None:
+            self._scroll_body(delta=10**9)
+
+        @kb.add("end")
+        def _(event: Any) -> None:
+            self.state.scrollback_offset = 0
 
         @kb.add("c-c")
         @kb.add("escape")
