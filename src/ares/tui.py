@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import curses
 import json
+import shutil
 import textwrap
 import threading
 import time
@@ -1102,7 +1103,84 @@ class AresTUI:
                 self.state.input_buffer += chr(key)
 
     def run(self) -> None:
-        curses.wrapper(self._loop)
+        try:
+            self._run_prompt_toolkit()
+        except ImportError:
+            curses.wrapper(self._loop)
+
+    def _prompt_toolkit_body_text(self, *, columns: int | None = None, rows: int | None = None) -> str:
+        self._refresh_handles()
+        if columns is None or rows is None:
+            size = shutil.get_terminal_size((100, 30))
+            columns = size.columns if columns is None else columns
+            rows = size.lines if rows is None else rows
+        width = min(120, max(72, int(columns) - 1))
+        height = max(1, int(rows) - 1)
+        frame_lines = self._frame_text(width=width).splitlines()
+        if frame_lines:
+            frame_lines = frame_lines[:-1]
+        return "\n".join(frame_lines[-height:])
+
+    def _run_prompt_toolkit(self) -> None:
+        from prompt_toolkit.application import Application
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import HSplit, Layout, Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.layout.dimension import Dimension
+        from prompt_toolkit.widgets import TextArea
+        try:
+            from rich.console import Console
+        except Exception as exc:  # pragma: no cover - rich is a Typer dependency in normal installs
+            raise ImportError("rich is required for the prompt_toolkit Ares TUI") from exc
+
+        console = Console(force_terminal=True, color_system="auto", width=120)
+
+        def body_text() -> str:
+            return self._prompt_toolkit_body_text()
+
+        body = Window(
+            FormattedTextControl(lambda: body_text()),
+            wrap_lines=False,
+            always_hide_cursor=True,
+        )
+        input_field = TextArea(
+            height=Dimension.exact(1),
+            prompt=lambda: [("class:prompt", get_theme(self.config.ui.theme).prompt_prefix)],
+            multiline=False,
+        )
+        kb = KeyBindings()
+
+        @kb.add("enter")
+        def _(event: Any) -> None:
+            self.state.input_buffer = input_field.text
+            input_field.text = ""
+            self._submit_buffer()
+            if self.state.should_exit:
+                event.app.exit()
+
+        @kb.add("up")
+        def _(event: Any) -> None:
+            self._move_selection(-1)
+
+        @kb.add("down")
+        def _(event: Any) -> None:
+            self._move_selection(1)
+
+        @kb.add("c-c")
+        @kb.add("escape")
+        def _(event: Any) -> None:
+            self.state.should_exit = True
+            event.app.exit()
+
+        app = Application(
+            layout=Layout(HSplit([body, input_field]), focused_element=input_field),
+            key_bindings=kb,
+            full_screen=True,
+            refresh_interval=max(0.1, float(self.refresh_interval)),
+            mouse_support=False,
+            style=None,
+        )
+        app.run()
 
 
 def launch_tui(*, refresh_interval: float = 0.5, yolo_mode: bool = False) -> None:

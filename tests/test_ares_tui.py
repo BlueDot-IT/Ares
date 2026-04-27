@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -290,6 +291,51 @@ class AresTuiTests(unittest.TestCase):
         tui._append_transcript("assistant", "Same final response")
 
         self.assertEqual(tui.state.transcript, [{"kind": "assistant", "text": "Same final response"}])
+
+    def test_tui_run_uses_prompt_toolkit_shell_by_default(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        calls: list[str] = []
+        tui._run_prompt_toolkit = lambda: calls.append("prompt_toolkit")
+
+        tui.run()
+
+        self.assertEqual(calls, ["prompt_toolkit"])
+
+    def test_tui_run_falls_back_to_curses_when_prompt_toolkit_unavailable(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        calls: list[str] = []
+        tui._run_prompt_toolkit = lambda: (_ for _ in ()).throw(ImportError("missing prompt_toolkit"))
+        with patch("ares.tui.curses.wrapper", side_effect=lambda loop: calls.append("curses")):
+            tui.run()
+
+        self.assertEqual(calls, ["curses"])
+
+    def test_prompt_toolkit_body_text_keeps_recent_transcript_visible_on_short_terminals(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        tui._append_transcript("user", "yo")
+        tui._append_transcript("assistant", "Visible final line")
+
+        body = tui._prompt_toolkit_body_text(columns=100, rows=10)
+
+        self.assertIn("operator > yo", body)
+        self.assertIn("ares     > Visible final line", body)
+        self.assertNotIn("AUTONOMOUS PENTEST OPERATIONS", body)
+        self.assertNotIn("ember    >", body)
+
+    def test_prompt_toolkit_shell_constructs_application(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        with patch("prompt_toolkit.application.Application.run", return_value=None) as run:
+            tui._run_prompt_toolkit()
+
+        run.assert_called_once()
 
     def test_select_neighbor_session_id_clamps_to_known_session_ids(self):
         from ares.tui import select_neighbor_session_id

@@ -26,6 +26,8 @@ classifiers = [
 dependencies = [
   "jsonschema",
   "openai",
+  "prompt_toolkit",
+  "rich",
   "typer",
 ]
 
