@@ -282,6 +282,15 @@ class AresTuiTests(unittest.TestCase):
         self.assertIn("ember    > /theme preview ember", tui.state.transcript[-1]["text"])
         self.assertIn("palette:", tui.state.transcript[-1]["text"])
 
+    def test_tui_suppresses_consecutive_duplicate_assistant_messages(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        tui._append_transcript("assistant", "Same final response")
+        tui._append_transcript("assistant", "Same final response")
+
+        self.assertEqual(tui.state.transcript, [{"kind": "assistant", "text": "Same final response"}])
+
     def test_select_neighbor_session_id_clamps_to_known_session_ids(self):
         from ares.tui import select_neighbor_session_id
 

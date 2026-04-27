@@ -581,6 +581,10 @@ class AresTUI:
         clean = str(text).strip()
         if not clean:
             return
+        if self.state.transcript:
+            last = self.state.transcript[-1]
+            if last.get("kind") == kind and last.get("text") == clean and kind in {"assistant", "system"}:
+                return
         self.state.transcript.append({"kind": kind, "text": clean})
         if len(self.state.transcript) > 160:
             self.state.transcript = self.state.transcript[-120:]
