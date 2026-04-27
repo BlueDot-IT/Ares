@@ -6,6 +6,43 @@ from typing import Any, Callable, Iterable
 from ares.policy.risk import RISK_ORDER
 
 
+def normalize_parameters_schema(schema: Any) -> dict[str, Any]:
+    """Return an OpenAI-compatible JSON object parameters schema.
+
+    Some MCP inventories emit `{\"type\": \"object\"}` for no-argument tools.
+    OpenAI's function schema validator rejects object schemas that omit the
+    `properties` member, so normalize root and nested object schemas here.
+    """
+    if not isinstance(schema, dict):
+        schema = {"type": "object"}
+    normalized = dict(schema)
+    if normalized.get("type") != "object":
+        normalized["type"] = "object"
+    properties = normalized.get("properties")
+    if not isinstance(properties, dict):
+        properties = {}
+    normalized["properties"] = {
+        str(name): normalize_property_schema(property_schema)
+        for name, property_schema in properties.items()
+    }
+    required = normalized.get("required")
+    if not isinstance(required, list):
+        required = []
+    normalized["required"] = [str(item) for item in required]
+    return normalized
+
+
+def normalize_property_schema(schema: Any) -> dict[str, Any]:
+    if not isinstance(schema, dict):
+        return {"type": "string"}
+    normalized = dict(schema)
+    if normalized.get("type") == "object":
+        return normalize_parameters_schema(normalized)
+    if normalized.get("type") == "array" and isinstance(normalized.get("items"), dict):
+        normalized["items"] = normalize_property_schema(normalized["items"])
+    return normalized
+
+
 @dataclass(frozen=True)
 class ToolAvailability:
     name: str
@@ -55,7 +92,9 @@ class ToolRegistry:
         normalized_schema = dict(schema)
         normalized_schema.setdefault("name", name)
         normalized_schema.setdefault("description", description or name)
-        normalized_schema.setdefault("parameters", {"type": "object", "properties": {}})
+        normalized_schema["parameters"] = normalize_parameters_schema(
+            normalized_schema.get("parameters", {"type": "object", "properties": {}})
+        )
         self._tools[name] = ToolEntry(
             name=name,
             toolset=toolset,

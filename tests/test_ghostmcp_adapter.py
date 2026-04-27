@@ -78,6 +78,32 @@ class GhostMCPAdapterTests(unittest.TestCase):
         self.assertEqual(entry.schema["parameters"]["properties"], {"targets": {"type": "string"}})
         self.assertEqual(entry.schema["parameters"]["required"], ["targets"])
 
+    def test_registered_ghostmcp_object_schemas_always_include_properties_for_openai(self):
+        from ares.tools.ghostmcp_adapter import register_ghostmcp_tools
+        from ares.tools.registry import ToolRegistry
+
+        class _FakeRunner:
+            tools = {
+                "amass_passive": {
+                    "name": "amass_passive",
+                    "description": "Passive amass inventory.",
+                    "inputSchema": {"type": "object"},
+                    "signature": "()",
+                }
+            }
+
+            def call(self, tool, args):
+                return {"ok": True}
+
+        registry = ToolRegistry()
+        register_ghostmcp_tools(registry, toolset="ghostmcp.test", runner=_FakeRunner())
+        definitions = registry.get_tool_definitions(enabled_toolsets={"ghostmcp.test"})
+
+        parameters = definitions[0]["function"]["parameters"]
+        self.assertEqual(parameters["type"], "object")
+        self.assertEqual(parameters["properties"], {})
+        self.assertEqual(parameters["required"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
