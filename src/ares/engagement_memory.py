@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ares.secure_files import ensure_private_dir, write_private_text
+
 
 def engagement_memory_dir(home: Path | str) -> Path:
-    path = Path(home).expanduser() / "memory" / "engagements"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return ensure_private_dir(Path(home).expanduser() / "memory" / "engagements")
 
 
 def write_engagement_memory(home: Path | str, event: dict[str, Any]) -> Path:
@@ -25,7 +25,7 @@ def write_engagement_memory(home: Path | str, event: dict[str, Any]) -> Path:
     if event.get("report_path"):
         payload["report_path"] = str(event["report_path"])
     path = engagement_memory_dir(home) / f"session-{session_id}.json"
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_private_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return path
 
 

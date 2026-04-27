@@ -183,10 +183,13 @@ class GatewayAuthTests(unittest.TestCase):
                 server.server_close()
                 thread.join(timeout=2)
 
-            audit_lines = [json.loads(line) for line in (home / "gateway-audit.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+            audit_path = home / "gateway-audit.jsonl"
+            audit_lines = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            audit_mode = audit_path.stat().st_mode & 0o777
 
         self.assertTrue(any(item["event"] == "auth_login_succeeded" for item in audit_lines))
         self.assertTrue(any(item["event"] == "run_submitted" for item in audit_lines))
+        self.assertEqual(audit_mode, 0o600)
 
 
 if __name__ == "__main__":

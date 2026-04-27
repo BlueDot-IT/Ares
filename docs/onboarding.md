@@ -118,7 +118,18 @@ Mode semantics:
 - `lan`: loopback plus private, link-local, and local IPv6 clients
 - `exposed`: remote clients allowed, with bearer auth strongly recommended
 
-When auth is enabled in exposed mode, use the web login flow or a pairing code from a trusted local operator session.
+When auth is enabled in exposed mode, use the web login flow or a pairing code from a trusted local operator session. If you explicitly run exposed mode without auth, CLI status output prints a warning because remote clients can reach the control plane unauthenticated.
+
+## Local file privacy
+
+Ares writes secret-bearing local files with private permissions on normal Unix filesystems:
+
+- `~/.ares/config.json`: `0600`, because it can contain the gateway operator token
+- `~/.ares/oauth/*.json`: `0600`, because it can contain OAuth access and refresh tokens
+- `~/.ares/gateway-audit.jsonl`: `0600`, because it can contain client addresses, targets, and operator actions
+- `~/.ares/memory/engagements/session-*.json`: `0600`, because it can contain target names and engagement summaries
+
+Provider keys used for OAuth cache filenames are constrained to safe local identifiers, such as `gemini`, so untrusted provider input cannot write outside the OAuth cache directory.
 
 ## Verification
 

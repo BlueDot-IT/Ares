@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,6 +12,7 @@ from ares.secure_files import ensure_private_dir, write_private_text
 
 DEFAULT_HOME = "~/.ares"
 OAUTH_DIRNAME = "oauth"
+_SAFE_PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -37,8 +39,15 @@ def oauth_cache_dir(home: Path | str | None = None) -> Path:
     return ensure_private_dir(resolve_home(home) / OAUTH_DIRNAME)
 
 
-def oauth_cache_path(*, home: Path | str | None = None, provider: str) -> Path:
+def normalize_oauth_provider_key(provider: str) -> str:
     key = str(provider or "").strip().lower()
+    if not _SAFE_PROVIDER_RE.fullmatch(key) or key in {".", ".."}:
+        raise ValueError(f"unsafe OAuth provider cache key: {provider!r}")
+    return key
+
+
+def oauth_cache_path(*, home: Path | str | None = None, provider: str) -> Path:
+    key = normalize_oauth_provider_key(provider)
     return oauth_cache_dir(home) / f"{key}.json"
 
 
@@ -78,8 +87,12 @@ def load_oauth_token(*, home: Path | str | None = None, provider: str) -> OAuthT
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    try:
+        provider_key = normalize_oauth_provider_key(str(payload.get("provider") or provider))
+    except ValueError:
+        return None
     return OAuthTokenCacheEntry(
-        provider=str(payload.get("provider") or provider).strip().lower() or str(provider).strip().lower(),
+        provider=provider_key,
         access_token=token,
         expires_at=expires_at.astimezone(timezone.utc),
         refresh_token=str(payload.get("refresh_token") or "").strip(),
@@ -102,7 +115,10 @@ def list_oauth_tokens(*, home: Path | str | None = None) -> list[OAuthTokenCache
         return []
     entries: list[OAuthTokenCacheEntry] = []
     for item in sorted(directory.glob("*.json")):
-        entry = load_oauth_token(home=directory.parent, provider=item.stem)
+        try:
+            entry = load_oauth_token(home=directory.parent, provider=item.stem)
+        except ValueError:
+            continue
         if entry is not None:
             entries.append(entry)
     return entries

@@ -174,6 +174,40 @@ class OAuthFlowTests(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "provider login failed"):
                 provider()
+    def test_oauth_cache_rejects_unsafe_provider_cache_keys(self):
+        from ares.llm.oauth_cache import oauth_cache_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            for provider in ("../evil", "bad/name", "bad\\name", "", ".", ".."):
+                with self.subTest(provider=provider):
+                    with self.assertRaises(ValueError):
+                        oauth_cache_path(home=home, provider=provider)
+
+        self.assertFalse((home.parent / "evil.json").exists())
+    def test_oauth_cache_listing_ignores_invalid_local_cache_filenames(self):
+        from ares.llm.oauth_cache import list_oauth_tokens, oauth_cache_dir
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            cache_dir = oauth_cache_dir(home)
+            (cache_dir / "bad name.json").write_text("{}", encoding="utf-8")
+
+            entries = list_oauth_tokens(home=home)
+
+        self.assertEqual(entries, [])
+    def test_oauth_broker_status_ignores_invalid_local_cache_filenames(self):
+        from ares.llm.oauth_cache import oauth_cache_dir
+        from ares.llm.oauth_flows import build_default_oauth_broker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            cache_dir = oauth_cache_dir(home)
+            (cache_dir / "bad name.json").write_text("{}", encoding="utf-8")
+
+            rows = build_default_oauth_broker(home=home).status()
+
+        self.assertEqual([row["provider"] for row in rows], ["gemini"])
 
 
 if __name__ == "__main__":

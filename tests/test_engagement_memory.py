@@ -53,6 +53,8 @@ class EngagementMemoryTests(unittest.TestCase):
 
             memory_path = home / "memory" / "engagements" / "session-1.json"
             payload = json.loads(memory_path.read_text(encoding="utf-8"))
+            memory_mode = memory_path.stat().st_mode & 0o777
+            memory_dir_mode = memory_path.parent.stat().st_mode & 0o777
 
         self.assertEqual(result.final_response, "finished cleanly")
         self.assertEqual(payload["session_id"], 1)
@@ -61,6 +63,8 @@ class EngagementMemoryTests(unittest.TestCase):
         self.assertEqual(payload["memory_tags"], ["recon", "external"])
         self.assertEqual(payload["status"], "completed")
         self.assertIn("report_path", payload)
+        self.assertEqual(memory_mode, 0o600)
+        self.assertEqual(memory_dir_mode, 0o700)
 
     def test_context_builder_loads_recent_matching_engagement_memory_and_ignores_unrelated_entries(self):
         from ares.agent.context_builder import ContextBuilder

@@ -354,19 +354,20 @@ def memory(
 
 def format_gateway_snapshot(mode: str, host: str, port: int, exposure: str, *, auth_enabled: bool = False, allow_cidrs: tuple[str, ...] = ()) -> str:
     allow_cidrs_label = ", ".join(allow_cidrs) or "-"
-    return "\n".join(
-        [
-            "Gateway",
-            "=======",
-            f"mode: {mode}",
-            f"host: {host}",
-            f"port: {port}",
-            f"bind: http://{host}:{port}",
-            f"exposure: {exposure}",
-            f"auth_enabled: {'yes' if auth_enabled else 'no'}",
-            f"allow_cidrs: {allow_cidrs_label}",
-        ]
-    )
+    lines = [
+        "Gateway",
+        "=======",
+        f"mode: {mode}",
+        f"host: {host}",
+        f"port: {port}",
+        f"bind: http://{host}:{port}",
+        f"exposure: {exposure}",
+        f"auth_enabled: {'yes' if auth_enabled else 'no'}",
+        f"allow_cidrs: {allow_cidrs_label}",
+    ]
+    if str(mode).strip().lower() == "exposed" and not auth_enabled:
+        lines.append("WARNING: exposed gateway mode is unauthenticated; enable bearer auth before remote use.")
+    return "\n".join(lines)
 
 
 def _gateway_connect_host(host: str) -> str:

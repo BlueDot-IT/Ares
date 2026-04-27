@@ -44,3 +44,28 @@ def write_private_text(path: Path | str, content: str, *, encoding: str = "utf-8
             pass
         raise
     return destination
+
+
+def append_private_line(path: Path | str, line: str, *, encoding: str = "utf-8") -> Path:
+    destination = Path(path).expanduser()
+    ensure_private_dir(destination.parent)
+    encoded = line.encode(encoding)
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_APPEND, PRIVATE_FILE_MODE)
+    try:
+        view = memoryview(encoded)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("private append wrote zero bytes")
+            view = view[written:]
+        try:
+            os.fchmod(fd, PRIVATE_FILE_MODE)
+        except PermissionError:
+            pass
+    finally:
+        os.close(fd)
+    try:
+        destination.chmod(PRIVATE_FILE_MODE)
+    except PermissionError:
+        pass
+    return destination

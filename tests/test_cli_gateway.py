@@ -109,6 +109,19 @@ class AresCliGatewayTests(unittest.TestCase):
             self.assertEqual(saved["gateway"]["operator_token"], "operator-secret")
             self.assertEqual(saved["gateway"]["allow_cidrs"], ["127.0.0.1/32", "10.0.0.0/8"])
 
+    def test_gateway_config_warns_when_exposed_mode_has_no_auth(self):
+        repo = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(repo / "src")
+            env["ARES_HOME"] = tmp
+
+            updated = self._run_cli("gateway-config", "--mode", "exposed", "--auth-disabled", env=env)
+
+        self.assertIn("mode: exposed", updated)
+        self.assertIn("auth_enabled: no", updated)
+        self.assertIn("WARNING: exposed gateway mode is unauthenticated", updated)
+
     def test_gateway_pair_command_issues_code_from_running_gateway(self):
         from ares.config.loader import save_gateway_config
         from ares.gateway import AresGateway, start_gateway_server

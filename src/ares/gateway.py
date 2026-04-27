@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 from ares.config.loader import AppConfig, GatewayConfig, load_config, resolve_gateway_mode
 from ares.gateway_auth import GatewayAuthManager, extract_bearer_token
 from ares.run import run_once
+from ares.secure_files import append_private_line
 from ares.webui import build_web_ui_css, build_web_ui_html, build_web_ui_js
 
 
@@ -233,9 +234,7 @@ class AresGateway:
 
     def _append_audit_event(self, event: str, **fields: Any) -> None:
         payload = {"event": event, "ts": time.time(), **fields}
-        self.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.audit_log_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        append_private_line(self.audit_log_path, json.dumps(payload, sort_keys=True) + "\n")
 
 
 def _normalize_client_address(client_host: str | None) -> ipaddress._BaseAddress | None:

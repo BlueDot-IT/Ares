@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
-from .oauth_cache import OAuthTokenCacheEntry, clear_oauth_token, load_oauth_token, save_oauth_token
+from .oauth_cache import OAuthTokenCacheEntry, clear_oauth_token, list_oauth_tokens, load_oauth_token, normalize_oauth_provider_key, save_oauth_token
 
 
 @dataclass(frozen=True)
@@ -69,17 +69,17 @@ class OAuthBroker:
     def status(self, provider: str | None = None) -> list[dict[str, str | bool]]:
         providers: list[str] = []
         if provider:
-            providers = [str(provider).strip().lower()]
+            providers = [normalize_oauth_provider_key(provider)]
         else:
-            providers = sorted(set([*self._flows.keys(), *[entry.provider for entry in []]]))
-            cached_dir = self.home / "oauth"
-            if cached_dir.exists():
-                providers.extend(item.stem for item in cached_dir.glob("*.json"))
-            providers = sorted(set(providers))
+            cached_entries = list_oauth_tokens(home=self.home)
+            providers = sorted(set([*self._flows.keys(), *[entry.provider for entry in cached_entries]]))
         rows: list[dict[str, str | bool]] = []
         for key in providers:
             info = self.describe(key)
-            cached = load_oauth_token(home=self.home, provider=key)
+            try:
+                cached = load_oauth_token(home=self.home, provider=key)
+            except ValueError:
+                continue
             rows.append(
                 {
                     "provider": key,
