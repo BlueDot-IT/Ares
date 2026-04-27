@@ -194,13 +194,9 @@ def _session_lookup(state_db: StateDB, session_id: int) -> dict[str, Any]:
 
 def build_startup_hero(*, width: int = 84) -> str:
     width = _fit_width(width, minimum=60)
-    banner_width = max(len(line) for line in STARTUP_BANNER_LINES)
     lines = [""]
-    if width >= banner_width:
-        lines.extend(_center_block(STARTUP_BANNER_LINES, width))
-        lines.append("")
-    else:
-        lines.append(_center_line(APP_NAME.upper(), width))
+    lines.extend(_center_block(STARTUP_BANNER_LINES, width))
+    lines.append("")
     lines.extend(
         [
             "",
@@ -231,7 +227,7 @@ def build_help_text() -> str:
             "/model              show or update model/provider/base URL",
             "/theme              show, preview, or switch among dark themes",
             "/report [id]        write a Markdown report for a session",
-            "/target <scope>     set the default authorized target",
+            "/target <target>    set the default authorized target",
             "/scope [mode]       toggle target scope: private or public",
             "/yolo               toggle dangerous-tool approval for new runs",
             "/clear              clear the transcript",

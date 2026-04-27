@@ -34,6 +34,15 @@ class AresTuiTests(unittest.TestCase):
         self.assertIn("Type /help or describe the task", hero)
         self.assertNotIn("╔", hero)
 
+    def test_build_startup_hero_preserves_ascii_banner_on_narrow_terminals(self):
+        from ares.tui import build_startup_hero
+
+        hero = build_startup_hero(width=80)
+
+        self.assertIn("        ##                                                 ##", hero)
+        self.assertIn("###  /###     /##       /###", hero)
+        self.assertNotEqual(hero.splitlines()[1].strip(), "ARES")
+
     def test_session_detail_view_shows_evidence_and_tool_history(self):
         from ares.state.db import StateDB
         from ares.tui import build_session_detail_text
@@ -158,7 +167,7 @@ class AresTuiTests(unittest.TestCase):
             yolo_mode=True,
         )
 
-        self.assertIn("ARES", shell)
+        self.assertIn("        ##                                                 ##", shell)
         self.assertIn("target: corp.example", shell)
         self.assertIn("scope: private", shell)
         self.assertIn("commands: type /commands for a list", shell)

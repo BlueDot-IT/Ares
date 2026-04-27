@@ -7,7 +7,7 @@ Concretely, the current system already includes:
 - multi-provider agent execution with native Anthropic and Gemini adapters plus OpenAI-compatible endpoints under one shared runtime
 - a central ToolRegistry and GhostMCP integration layer so tools are exposed through one model-facing contract instead of provider-specific glue
 - dispatcher-owned policy enforcement for scope, ROE, risk, approval gates, duplicate suppression, timeouts, and route selection outside the model
-- operator-facing control surfaces including a CLI, curses TUI, lightweight HTTP gateway, event stream, session persistence, and report generation
+- operator-facing control surfaces including a Typer CLI, Hermes-style prompt_toolkit/Rich TUI, lightweight HTTP gateway, event stream, session persistence, and report generation
 - pentest-specific state handling for hosts, services, tool calls, evidence normalization, and Markdown reporting
 
 That is the intended shape of Ares: the best operational ideas from Hermes and OpenClaw, narrowed onto authorized pentesting rather than general-purpose agent work.
@@ -46,7 +46,7 @@ Implemented and wired into the current runtime:
 - Multi-agent routing with agent profiles, route selection, prompt prefixes, memory tags, route preview, and per-agent tool visibility
 - Guided onboarding for provider selection, auth mode, theme, gateway exposure, and hook defaults
 - Cached OAuth helpers for supported model providers, currently Gemini/Google OAuth
-- New curses-based TUI for dashboard, sessions, doctor view, tool inventory, run launching, and report writing
+- Hermes-style prompt_toolkit/Rich TUI with chat-first transcript, slash commands, theme colors, transcript scrollback, `/scope` public/private target toggling, and curses fallback when prompt_toolkit is unavailable
 
 ## Install
 
@@ -159,23 +159,44 @@ Launch the terminal UI:
 ares tui
 ```
 
-Current keybindings:
+The TUI is the primary operator shell. It now uses a Hermes-style `prompt_toolkit` input loop with Rich/prompt_toolkit styling and keeps the original curses loop only as an import-time fallback. The full ASCII Ares banner is preserved; the live transcript is chat-first and uses compact top chrome so tool calls, tool results, and model responses remain visible.
 
-- `d` dashboard
-- `s` sessions
-- `t` tools
-- `o` doctor
-- `n` prompt for and launch a new run
-- `p` write a Markdown report for a selected session
-- `j` / `k` move session selection
-- `r` refresh
-- `q` quit
+Inside the TUI, type normal instructions to launch a run, or use slash commands:
 
-The TUI is deliberately minimal and stable-first right now. It is a control room for the runtime, not yet a rich multi-pane live event stream.
+```text
+/commands          show the full command list
+/target <target>   set the default authorized target
+/scope public      allow authorized public targets in this TUI process
+/scope private     return to private/loopback target scope only
+/yolo              toggle dangerous-tool approval for new runs
+/model             show or update provider/model/base URL
+/theme             list, preview, or switch themes
+/live              show current background run events
+/report [id]       write a Markdown report for a session
+/quit              exit
+```
+
+Useful keys:
+
+- `PageUp` / `PageDown` scroll transcript history so earlier tool errors remain inspectable
+- `Home` jumps to the oldest visible transcript output
+- `End` returns to live/latest output
+- `Up` / `Down` move the selected stored session
+- `Ctrl-C` or `Escape` exits the TUI
+
+Scope defaults remain conservative. Public target scanning is opt-in and process-local from the TUI:
+
+```text
+/scope public
+/target 203.0.113.10
+Run safe-active enumeration against this authorized VPS. Do not brute force, exploit, fuzz, or run intrusive scans.
+```
+
+Use `/scope private` when done. To make public-target scope persistent across restarts, set `ARES_ALLOW_PRIVATE_ONLY=false` in the process environment or `~/.ares/.env`.
 
 ## Config
 
-Ares-prefixed environment variables are now primary. Legacy `ARES_*` names still work as fallbacks.
+Ares-prefixed environment variables are primary. Ares also loads simple `KEY=VALUE` entries from `~/.ares/.env` before reading config and before building model clients. Existing process environment values win for the same variable name.
 
 ```bash
 export ARES_HOME="$HOME/.ares"
@@ -183,6 +204,7 @@ export ARES_LLM_PROVIDER="openai"
 export ARES_LLM_MODEL="local-model"
 export ARES_OPENAI_BASE_URL="http://127.0.0.1:1234/v1"
 export ARES_OPENAI_API_KEY="***"
+export OPENAI_API_KEY="***"  # also accepted by the OpenAI-compatible adapter
 export ARES_OPENROUTER_API_KEY="***"
 export ARES_ANTHROPIC_API_KEY="***"
 export ARES_GEMINI_API_KEY="***"
@@ -203,7 +225,7 @@ Defaults remain conservative:
 Primary operator surface:
 
 - `src/ares/cli.py` - primary Typer CLI
-- `src/ares/tui.py` - curses TUI shell
+- `src/ares/tui.py` - Hermes-style prompt_toolkit/Rich TUI shell with curses fallback
 - `src/ares/*` - user-facing compatibility wrappers over the runtime core
 
 Runtime core:
