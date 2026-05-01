@@ -99,6 +99,7 @@ def apply_agent_profile(config: AppConfig, resolution: AgentResolution) -> AppCo
         ui=config.ui,
         hooks=config.hooks,
         gateway=config.gateway,
+        onionclaw=config.onionclaw,
         agents=agents,
     )
 

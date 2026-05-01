@@ -49,7 +49,7 @@ class Orchestrator:
     def _load_scope(self) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
         # Load from env or file in future; default to RFC1918 + loopback for safety
         scope_str = os.getenv(
-            "ARES_ALLOWED_CIDRS",
+            "ALLOWED_CIDRS",
             "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
         )
         return [ipaddress.ip_network(c.strip()) for t in scope_str.split(",") if (c := t.strip())]

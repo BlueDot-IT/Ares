@@ -169,14 +169,14 @@ def format_onboarding_summary(*, home: Path, result: FullOnboardingResult) -> li
         f"auto_report_on_finish: {'yes' if final_cfg.hooks.auto_report_on_finish else 'no'}",
     ]
     if result.model_setup.profile_name == "openrouter":
-        lines.append("Remember to export ARES_OPENROUTER_API_KEY before running Ares.")
+        lines.append("Remember to export OPENROUTER_API_KEY before running Ares.")
     elif result.model_setup.profile_name == "anthropic":
-        lines.append("Remember to install '.[anthropic]' and export ARES_ANTHROPIC_API_KEY.")
+        lines.append("Remember to install '.[anthropic]' and export ANTHROPIC_API_KEY.")
     elif result.model_setup.profile_name == "gemini":
         if final_cfg.llm.auth_mode == "oauth":
             lines.append("Use 'ares auth login --provider gemini' if you skipped sign-in or need to refresh cached Google credentials.")
         else:
-            lines.append("Remember to install '.[gemini]' and export ARES_GEMINI_API_KEY.")
+            lines.append("Remember to install '.[gemini]' and export GEMINI_API_KEY.")
     return lines
 
 
@@ -186,7 +186,7 @@ def _prompt_auth_mode(choice: ProviderChoice, *, current) -> str:
     return select_one(
         "Model auth mode",
         choices=[
-            Choice(value="api-key", label="API key", hint="Use an environment variable such as ARES_GEMINI_API_KEY."),
+            Choice(value="api-key", label="API key", hint="Use an environment variable such as GEMINI_API_KEY."),
             Choice(value="oauth", label="OAuth", hint="Use cached Google credentials with a real sign-in flow."),
         ],
         default=current.llm.auth_mode,

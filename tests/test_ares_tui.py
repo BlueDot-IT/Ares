@@ -219,17 +219,17 @@ class AresTuiTests(unittest.TestCase):
     def test_scope_command_toggles_public_target_policy_for_authorized_vps(self):
         from ares.tui import AresTUI
 
-        old_home = os.environ.get("ARES_HOME")
-        old_scope = os.environ.get("ARES_ALLOW_PRIVATE_ONLY")
+        old_home = os.environ.get("APP_HOME")
+        old_scope = os.environ.get("ALLOW_PRIVATE_ONLY")
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                os.environ["ARES_HOME"] = tmp
-                os.environ["ARES_ALLOW_PRIVATE_ONLY"] = "true"
+                os.environ["APP_HOME"] = tmp
+                os.environ["ALLOW_PRIVATE_ONLY"] = "true"
                 tui = AresTUI()
 
                 tui._handle_slash_command("/scope public")
 
-                self.assertEqual(os.environ["ARES_ALLOW_PRIVATE_ONLY"], "false")
+                self.assertEqual(os.environ["ALLOW_PRIVATE_ONLY"], "false")
                 self.assertFalse(tui.config.policy.allow_private_only)
                 self.assertIn("public targets allowed", tui.state.transcript[-1]["text"])
 
@@ -238,26 +238,26 @@ class AresTuiTests(unittest.TestCase):
 
                 tui._handle_slash_command("/scope private")
 
-                self.assertEqual(os.environ["ARES_ALLOW_PRIVATE_ONLY"], "true")
+                self.assertEqual(os.environ["ALLOW_PRIVATE_ONLY"], "true")
                 self.assertTrue(tui.config.policy.allow_private_only)
                 self.assertIn("private-only", tui.state.transcript[-1]["text"])
 
                 tui._handle_slash_command("/scope")
-                self.assertEqual(os.environ["ARES_ALLOW_PRIVATE_ONLY"], "false")
+                self.assertEqual(os.environ["ALLOW_PRIVATE_ONLY"], "false")
                 self.assertFalse(tui.config.policy.allow_private_only)
 
                 tui._handle_slash_command("/scope banana")
-                self.assertEqual(os.environ["ARES_ALLOW_PRIVATE_ONLY"], "false")
+                self.assertEqual(os.environ["ALLOW_PRIVATE_ONLY"], "false")
                 self.assertIn("usage: /scope", tui.state.transcript[-1]["text"])
         finally:
             if old_home is None:
-                os.environ.pop("ARES_HOME", None)
+                os.environ.pop("APP_HOME", None)
             else:
-                os.environ["ARES_HOME"] = old_home
+                os.environ["APP_HOME"] = old_home
             if old_scope is None:
-                os.environ.pop("ARES_ALLOW_PRIVATE_ONLY", None)
+                os.environ.pop("ALLOW_PRIVATE_ONLY", None)
             else:
-                os.environ["ARES_ALLOW_PRIVATE_ONLY"] = old_scope
+                os.environ["ALLOW_PRIVATE_ONLY"] = old_scope
 
     def test_commands_alias_shows_help_text(self):
         from ares.tui import AresTUI
@@ -273,10 +273,10 @@ class AresTuiTests(unittest.TestCase):
         from ares.state.db import StateDB
         from ares.tui import AresTUI
 
-        old_home = os.environ.get("ARES_HOME")
+        old_home = os.environ.get("APP_HOME")
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                os.environ["ARES_HOME"] = tmp
+                os.environ["APP_HOME"] = tmp
                 root = Path(tmp)
                 tui = AresTUI()
                 tui.config = AppConfig(
@@ -302,18 +302,18 @@ class AresTuiTests(unittest.TestCase):
                 self.assertIn("model: redteam-model", tui.state.transcript[-1]["text"])
         finally:
             if old_home is None:
-                os.environ.pop("ARES_HOME", None)
+                os.environ.pop("APP_HOME", None)
             else:
-                os.environ["ARES_HOME"] = old_home
+                os.environ["APP_HOME"] = old_home
 
     def test_model_profile_and_theme_commands_persist_settings_and_streamed_text_is_folded_into_transcript(self):
         from ares.config.loader import load_config
         from ares.tui import AresTUI
 
-        old_home = os.environ.get("ARES_HOME")
+        old_home = os.environ.get("APP_HOME")
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                os.environ["ARES_HOME"] = tmp
+                os.environ["APP_HOME"] = tmp
                 tui = AresTUI()
 
                 tui._handle_slash_command("/model profile openrouter")
@@ -336,9 +336,9 @@ class AresTuiTests(unittest.TestCase):
                 self.assertIn("matrix", tui.state.transcript[-1]["text"])
         finally:
             if old_home is None:
-                os.environ.pop("ARES_HOME", None)
+                os.environ.pop("APP_HOME", None)
             else:
-                os.environ["ARES_HOME"] = old_home
+                os.environ["APP_HOME"] = old_home
 
     def test_theme_preview_command_renders_selected_theme_preview(self):
         from ares.tui import AresTUI

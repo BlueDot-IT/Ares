@@ -237,7 +237,7 @@ def build_help_text() -> str:
             "- Type a normal message to launch a run.",
             "- Tool calls and results stream inline in the transcript.",
             "- PageUp/PageDown scroll transcript history; Home jumps to oldest; End returns to latest output.",
-            "- Reports are written under ARES_HOME/reports.",
+            "- Reports are written under APP_HOME/reports.",
         ]
     )
 
@@ -920,7 +920,7 @@ class AresTUI:
         else:
             self._append_transcript("system", "usage: /scope [public|private]")
             return
-        os.environ["ARES_ALLOW_PRIVATE_ONLY"] = "true" if private_only else "false"
+        os.environ["ALLOW_PRIVATE_ONLY"] = "true" if private_only else "false"
         self.config = load_config(self.config.home)
         if private_only:
             self.state.status_message = "scope: private-only"

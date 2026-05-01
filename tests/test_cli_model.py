@@ -29,10 +29,10 @@ class AresCliModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
-            env.pop("ARES_LLM_PROVIDER", None)
-            env.pop("ARES_LLM_MODEL", None)
-            env.pop("ARES_OPENAI_BASE_URL", None)
+            env["APP_HOME"] = tmp
+            env.pop("LLM_PROVIDER", None)
+            env.pop("LLM_MODEL", None)
+            env.pop("OPENAI_BASE_URL", None)
 
             initial = self._run_cli("model", env=env)
             self.assertIn("provider: openai", initial)
@@ -63,10 +63,10 @@ class AresCliModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
-            env.pop("ARES_LLM_PROVIDER", None)
-            env.pop("ARES_LLM_MODEL", None)
-            env.pop("ARES_OPENAI_BASE_URL", None)
+            env["APP_HOME"] = tmp
+            env.pop("LLM_PROVIDER", None)
+            env.pop("LLM_MODEL", None)
+            env.pop("OPENAI_BASE_URL", None)
 
             updated = self._run_cli("model", "--profile", "openrouter", env=env)
 
@@ -82,10 +82,10 @@ class AresCliModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
-            env.pop("ARES_LLM_PROVIDER", None)
-            env.pop("ARES_LLM_MODEL", None)
-            env.pop("ARES_OPENAI_BASE_URL", None)
+            env["APP_HOME"] = tmp
+            env.pop("LLM_PROVIDER", None)
+            env.pop("LLM_MODEL", None)
+            env.pop("OPENAI_BASE_URL", None)
 
             updated = self._run_cli(
                 "model",
@@ -108,10 +108,10 @@ class AresCliModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
-            env.pop("ARES_LLM_PROVIDER", None)
-            env.pop("ARES_LLM_MODEL", None)
-            env.pop("ARES_OPENAI_BASE_URL", None)
+            env["APP_HOME"] = tmp
+            env.pop("LLM_PROVIDER", None)
+            env.pop("LLM_MODEL", None)
+            env.pop("OPENAI_BASE_URL", None)
 
             output = self._run_cli(
                 "model",
@@ -142,10 +142,10 @@ class AresCliModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
-            env.pop("ARES_LLM_PROVIDER", None)
-            env.pop("ARES_LLM_MODEL", None)
-            env.pop("ARES_OPENAI_BASE_URL", None)
+            env["APP_HOME"] = tmp
+            env.pop("LLM_PROVIDER", None)
+            env.pop("LLM_MODEL", None)
+            env.pop("OPENAI_BASE_URL", None)
 
             output = self._run_cli(
                 "model",

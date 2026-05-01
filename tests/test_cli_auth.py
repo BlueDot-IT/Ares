@@ -102,7 +102,7 @@ class CliAuthTests(unittest.TestCase):
         broker = _FakeBroker()
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
-            env["ARES_HOME"] = tmp
+            env["APP_HOME"] = tmp
             with patch("ares.onboarding.build_oauth_broker", return_value=broker):
                 result = self.runner.invoke(
                     app,

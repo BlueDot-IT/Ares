@@ -51,7 +51,7 @@ class ProviderSelectionTests(unittest.TestCase):
                 llm=LLMConfig(provider="anthropic", model="claude-3-7-sonnet"),
                 policy=PolicyConfig(),
             )
-            with patch.dict(os.environ, {"ARES_ANTHROPIC_API_KEY": "anth-key"}, clear=False):
+            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "anth-key"}, clear=False):
                 with patch.object(AnthropicModel, "_create_client", return_value=object()) as create_client:
                     model = build_model(config)
 

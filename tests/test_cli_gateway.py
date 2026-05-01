@@ -40,7 +40,7 @@ class AresCliGatewayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
+            env["APP_HOME"] = tmp
 
             initial = self._run_cli("gateway-config", env=env)
             self.assertIn("mode: loopback", initial)
@@ -63,7 +63,7 @@ class AresCliGatewayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
+            env["APP_HOME"] = tmp
 
             updated = self._run_cli(
                 "gateway-config",
@@ -86,7 +86,7 @@ class AresCliGatewayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
+            env["APP_HOME"] = tmp
 
             updated = self._run_cli(
                 "gateway-config",
@@ -114,7 +114,7 @@ class AresCliGatewayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
+            env["APP_HOME"] = tmp
 
             updated = self._run_cli("gateway-config", "--mode", "exposed", "--auth-disabled", env=env)
 
@@ -131,7 +131,7 @@ class AresCliGatewayTests(unittest.TestCase):
             home = Path(tmp)
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
+            env["APP_HOME"] = tmp
             save_gateway_config(
                 home=home,
                 mode="exposed",

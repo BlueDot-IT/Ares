@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ares"
-version = "0.1.0a0"
+version = "0.1.0b0"
 description = "Ares autonomous penetration testing suite for authorized engagements"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,7 +13,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["security", "pentest", "ai-agent", "autonomous-testing", "ghostmcp"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Information Technology",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",

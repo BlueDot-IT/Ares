@@ -17,7 +17,7 @@ class MCPServerParameters:
     cwd: str | None = None
     env: dict[str, str] = field(default_factory=dict)
     client_name: str = "ares"
-    client_version: str = "0.1.0a0"
+    client_version: str = "0.1.0b0"
 
 
 def write_rpc_message(handle: BinaryIO, payload: dict[str, Any]) -> None:

@@ -28,7 +28,7 @@ class AresCliRouteMemoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
+            env["APP_HOME"] = tmp
             config_path = Path(tmp) / "config.json"
             config_path.write_text(
                 json.dumps(
@@ -71,7 +71,7 @@ class AresCliRouteMemoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo / "src")
-            env["ARES_HOME"] = tmp
+            env["APP_HOME"] = tmp
             memory_dir = Path(tmp) / "memory" / "engagements"
             memory_dir.mkdir(parents=True, exist_ok=True)
             (memory_dir / "session-2.json").write_text(

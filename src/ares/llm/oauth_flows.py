@@ -122,7 +122,7 @@ class GoogleOAuthFlow:
         )
 
     def login(self, *, home: Path, cached: OAuthTokenCacheEntry | None = None) -> OAuthTokenCacheEntry:
-        client_secrets = str(self.client_secrets_file or os.getenv("ARES_GOOGLE_OAUTH_CLIENT_SECRETS") or os.getenv("GOOGLE_OAUTH_CLIENT_SECRETS") or "").strip()
+        client_secrets = str(self.client_secrets_file or os.getenv("GOOGLE_OAUTH_CLIENT_SECRETS") or os.getenv("GOOGLE_OAUTH_CLIENT_SECRETS") or "").strip()
         if client_secrets:
             return self._login_with_installed_app(client_secrets)
         return self._login_with_adc()
@@ -154,7 +154,7 @@ class GoogleOAuthFlow:
             from google.auth.transport.requests import Request
         except Exception as exc:  # pragma: no cover - depends on optional package
             raise RuntimeError(
-                "google-auth package is required for Google OAuth login. Install '.[gemini]' and optionally set ARES_GOOGLE_OAUTH_CLIENT_SECRETS for browser login."
+                "google-auth package is required for Google OAuth login. Install '.[gemini]' and optionally set GOOGLE_OAUTH_CLIENT_SECRETS for browser login."
             ) from exc
         credentials, _ = google.auth.default(scopes=list(self.scopes))
         if credentials is None:

@@ -20,11 +20,11 @@ class ConfigLoaderTests(unittest.TestCase):
         from ares.config.loader import load_config
 
         with tempfile.TemporaryDirectory() as tmp:
-            old_home = os.environ.get("ARES_HOME")
-            old_model = os.environ.get("ARES_LLM_MODEL")
+            old_home = os.environ.get("APP_HOME")
+            old_model = os.environ.get("LLM_MODEL")
             try:
-                os.environ["ARES_HOME"] = tmp
-                os.environ["ARES_LLM_MODEL"] = "unit-test-model"
+                os.environ["APP_HOME"] = tmp
+                os.environ["LLM_MODEL"] = "unit-test-model"
 
                 cfg = load_config()
 
@@ -34,13 +34,13 @@ class ConfigLoaderTests(unittest.TestCase):
                 self.assertTrue(cfg.policy.allow_private_only)
             finally:
                 if old_home is None:
-                    os.environ.pop("ARES_HOME", None)
+                    os.environ.pop("APP_HOME", None)
                 else:
-                    os.environ["ARES_HOME"] = old_home
+                    os.environ["APP_HOME"] = old_home
                 if old_model is None:
-                    os.environ.pop("ARES_LLM_MODEL", None)
+                    os.environ.pop("LLM_MODEL", None)
                 else:
-                    os.environ["ARES_LLM_MODEL"] = old_model
+                    os.environ["LLM_MODEL"] = old_model
 
 
 class ToolRegistryTests(unittest.TestCase):

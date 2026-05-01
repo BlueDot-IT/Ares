@@ -20,56 +20,56 @@ _OPENAI_COMPAT_PROVIDER_SPECS = {
     "openai": ProviderSpec(
         name="openai",
         family="openai_compat",
-        api_key_envs=("ARES_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        api_key_envs=("OPENAI_API_KEY",),
         openai_compatible=True,
     ),
     "openrouter": ProviderSpec(
         name="openrouter",
         family="openai_compat",
-        api_key_envs=("ARES_OPENROUTER_API_KEY", "OPENROUTER_API_KEY", "ARES_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        api_key_envs=("OPENROUTER_API_KEY", "OPENAI_API_KEY"),
         openai_compatible=True,
         default_base_url=DEFAULT_OPENROUTER_BASE_URL,
     ),
     "local": ProviderSpec(
         name="local",
         family="openai_compat",
-        api_key_envs=("ARES_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        api_key_envs=("OPENAI_API_KEY",),
         openai_compatible=True,
     ),
     "lm-studio": ProviderSpec(
         name="lm-studio",
         family="openai_compat",
-        api_key_envs=("ARES_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        api_key_envs=("OPENAI_API_KEY",),
         openai_compatible=True,
     ),
     "ollama": ProviderSpec(
         name="ollama",
         family="openai_compat",
-        api_key_envs=("ARES_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        api_key_envs=("OPENAI_API_KEY",),
         openai_compatible=True,
     ),
     "vllm": ProviderSpec(
         name="vllm",
         family="openai_compat",
-        api_key_envs=("ARES_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        api_key_envs=("OPENAI_API_KEY",),
         openai_compatible=True,
     ),
     "llama-cpp": ProviderSpec(
         name="llama-cpp",
         family="openai_compat",
-        api_key_envs=("ARES_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        api_key_envs=("OPENAI_API_KEY",),
         openai_compatible=True,
     ),
     "openai-compatible": ProviderSpec(
         name="openai-compatible",
         family="openai_compat",
-        api_key_envs=("ARES_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        api_key_envs=("OPENAI_API_KEY",),
         openai_compatible=True,
     ),
     "custom": ProviderSpec(
         name="custom",
         family="openai_compat",
-        api_key_envs=("ARES_OPENAI_API_KEY", "OPENAI_API_KEY"),
+        api_key_envs=("OPENAI_API_KEY",),
         openai_compatible=True,
     ),
 }
@@ -89,12 +89,12 @@ _PROVIDER_SPECS = {
     "anthropic": ProviderSpec(
         name="anthropic",
         family="anthropic",
-        api_key_envs=("ARES_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
+        api_key_envs=("ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
     ),
     "gemini": ProviderSpec(
         name="gemini",
         family="gemini",
-        api_key_envs=("ARES_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
+        api_key_envs=("GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
     ),
 }
 

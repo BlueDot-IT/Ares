@@ -81,6 +81,15 @@ class GatewayConfig:
 
 
 @dataclass(frozen=True)
+class OnionClawConfig:
+    enabled: bool = False
+    repo_path: str = ""
+    python_bin: str = "python3"
+    env_path: str = ""
+    db_path: str = ""
+
+
+@dataclass(frozen=True)
 class AgentProfileConfig:
     name: str
     provider: str | None = None
@@ -122,6 +131,7 @@ class AppConfig:
     ui: UIConfig = field(default_factory=UIConfig)
     hooks: HooksConfig = field(default_factory=HooksConfig)
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
+    onionclaw: OnionClawConfig = field(default_factory=OnionClawConfig)
     agents: AgentsConfig = field(default_factory=AgentsConfig)
 
 
@@ -135,7 +145,7 @@ def _env_bool(name: str, default: bool) -> bool:
 def resolve_home(home: Path | str | None = None) -> Path:
     if home is not None:
         return Path(home).expanduser()
-    return Path(os.getenv("ARES_HOME", DEFAULT_HOME)).expanduser()
+    return Path(os.getenv("APP_HOME", DEFAULT_HOME)).expanduser()
 
 
 def config_file_path(home: Path | str | None = None) -> Path:
@@ -144,6 +154,18 @@ def config_file_path(home: Path | str | None = None) -> Path:
 
 def env_file_path(home: Path | str | None = None) -> Path:
     return resolve_home(home) / ".env"
+
+
+def onionclaw_dir_path(home: Path | str | None = None) -> Path:
+    return resolve_home(home) / "integrations" / "onionclaw"
+
+
+def onionclaw_env_file_path(home: Path | str | None = None) -> Path:
+    return onionclaw_dir_path(home) / ".env"
+
+
+def onionclaw_db_path(home: Path | str | None = None) -> Path:
+    return onionclaw_dir_path(home) / "sicry.db"
 
 
 def load_home_env(home: Path | str | None = None, *, override: bool = False) -> dict[str, str]:
@@ -443,6 +465,46 @@ def save_hooks_config(*, home: Path | str | None = None, auto_report_on_finish: 
     return _write_config_document(document, home=home)
 
 
+def save_onionclaw_config(
+    *,
+    home: Path | str | None = None,
+    enabled: bool | None = None,
+    repo_path: str | None = None,
+    python_bin: str | None = None,
+    env_path: str | None = None,
+    db_path: str | None = None,
+) -> Path:
+    document = _load_config_document(home)
+    onionclaw = document.get("onionclaw")
+    if not isinstance(onionclaw, dict):
+        onionclaw = {}
+    if enabled is not None:
+        onionclaw["enabled"] = bool(enabled)
+    if repo_path is not None:
+        value = repo_path.strip()
+        if value:
+            onionclaw["repo_path"] = value
+        else:
+            onionclaw.pop("repo_path", None)
+    if python_bin is not None:
+        value = python_bin.strip()
+        onionclaw["python_bin"] = value or "python3"
+    if env_path is not None:
+        value = env_path.strip()
+        if value:
+            onionclaw["env_path"] = value
+        else:
+            onionclaw.pop("env_path", None)
+    if db_path is not None:
+        value = db_path.strip()
+        if value:
+            onionclaw["db_path"] = value
+        else:
+            onionclaw.pop("db_path", None)
+    document["onionclaw"] = onionclaw
+    return _write_config_document(document, home=home)
+
+
 def save_gateway_config(
     *,
     home: Path | str | None = None,
@@ -525,6 +587,44 @@ def _load_agent_profiles(document: dict[str, Any]) -> AgentsConfig:
     return AgentsConfig(default_agent=default_agent, active_agent=active_agent, profiles=profiles, routes=routes)
 
 
+def _augment_agents_for_onionclaw(agents: AgentsConfig, onionclaw: OnionClawConfig) -> AgentsConfig:
+    if not onionclaw.enabled:
+        return agents
+
+    profiles = dict(agents.profiles)
+    profiles.setdefault(
+        "darkweb",
+        AgentProfileConfig(
+            name="darkweb",
+            enabled_toolsets=("onionclaw",),
+            max_risk="active",
+            allow_private_only=False,
+            prompt_prefix="[darkweb] ",
+            memory_tags=("darkweb", "tor", "osint"),
+        ),
+    )
+
+    routes = list(agents.routes)
+    has_onion_target_route = any(
+        route.agent == "darkweb" and any(token.lower() == ".onion" for token in route.target_contains)
+        for route in routes
+    )
+    if not has_onion_target_route:
+        routes.insert(
+            0,
+            AgentRouteConfig(
+                agent="darkweb",
+                target_contains=(".onion",),
+            ),
+        )
+    return AgentsConfig(
+        default_agent=agents.default_agent,
+        active_agent=agents.active_agent,
+        profiles=profiles,
+        routes=tuple(routes),
+    )
+
+
 def load_config(home: Path | str | None = None) -> AppConfig:
     """Load the first-pass Ares config from env, persisted config, and defaults."""
     resolved_home = resolve_home(home)
@@ -534,45 +634,53 @@ def load_config(home: Path | str | None = None) -> AppConfig:
     persisted_ui = document.get("ui") if isinstance(document.get("ui"), dict) else {}
     persisted_hooks = document.get("hooks") if isinstance(document.get("hooks"), dict) else {}
     persisted_gateway = document.get("gateway") if isinstance(document.get("gateway"), dict) else {}
+    persisted_onionclaw = document.get("onionclaw") if isinstance(document.get("onionclaw"), dict) else {}
 
     provider = _normalize_provider_or_raise(
-        os.getenv("ARES_LLM_PROVIDER", str(persisted_llm.get("provider", DEFAULT_LLM_PROVIDER)))
+        os.getenv("LLM_PROVIDER", str(persisted_llm.get("provider", DEFAULT_LLM_PROVIDER)))
     )
     default_base_url = provider_default_base_url(provider, fallback=DEFAULT_OPENAI_BASE_URL)
     llm = LLMConfig(
         provider=provider,
-        model=os.getenv("ARES_LLM_MODEL", str(persisted_llm.get("model", DEFAULT_LLM_MODEL))),
+        model=os.getenv("LLM_MODEL", str(persisted_llm.get("model", DEFAULT_LLM_MODEL))),
         openai_base_url=os.getenv(
-            "ARES_OPENAI_BASE_URL",
+            "OPENAI_BASE_URL",
             str(persisted_llm.get("openai_base_url", default_base_url)),
         ),
         fallbacks=_normalize_fallbacks(persisted_llm.get("fallbacks")),
-        auth_mode=_normalize_auth_mode(os.getenv("ARES_LLM_AUTH_MODE", str(persisted_llm.get("auth_mode", DEFAULT_LLM_AUTH_MODE)))),
-        oauth_token_command=os.getenv("ARES_LLM_OAUTH_TOKEN_COMMAND", str(persisted_llm.get("oauth_token_command", ""))).strip(),
-        oauth_project=os.getenv("ARES_LLM_OAUTH_PROJECT", str(persisted_llm.get("oauth_project", ""))).strip(),
-        oauth_location=os.getenv("ARES_LLM_OAUTH_LOCATION", str(persisted_llm.get("oauth_location", ""))).strip(),
+        auth_mode=_normalize_auth_mode(os.getenv("LLM_AUTH_MODE", str(persisted_llm.get("auth_mode", DEFAULT_LLM_AUTH_MODE)))),
+        oauth_token_command=os.getenv("LLM_OAUTH_TOKEN_COMMAND", str(persisted_llm.get("oauth_token_command", ""))).strip(),
+        oauth_project=os.getenv("LLM_OAUTH_PROJECT", str(persisted_llm.get("oauth_project", ""))).strip(),
+        oauth_location=os.getenv("LLM_OAUTH_LOCATION", str(persisted_llm.get("oauth_location", ""))).strip(),
     )
-    default_mode = os.getenv("ARES_DEFAULT_MODE", DEFAULT_MODE)
-    roe_profile = os.getenv("ARES_ROE_PROFILE", default_mode)
+    default_mode = os.getenv("DEFAULT_MODE", DEFAULT_MODE)
+    roe_profile = os.getenv("ROE_PROFILE", default_mode)
     profile = ROEProfileRegistry.builtin().get(roe_profile)
     policy = PolicyConfig(
         default_mode=default_mode,
-        allow_private_only=_env_bool("ARES_ALLOW_PRIVATE_ONLY", True),
-        max_risk=os.getenv("ARES_MAX_RISK", profile.max_risk),
+        allow_private_only=_env_bool("ALLOW_PRIVATE_ONLY", True),
+        max_risk=os.getenv("MAX_RISK", profile.max_risk),
         roe_profile=roe_profile,
     )
-    ui = UIConfig(theme=normalize_theme(os.getenv("ARES_UI_THEME", str(persisted_ui.get("theme", DEFAULT_THEME)))))
-    hooks = HooksConfig(auto_report_on_finish=_env_bool("ARES_AUTO_REPORT_ON_FINISH", bool(persisted_hooks.get("auto_report_on_finish", False))))
-    gateway_mode = resolve_gateway_mode(os.getenv("ARES_GATEWAY_MODE", str(persisted_gateway.get("mode", DEFAULT_GATEWAY_MODE))))
+    ui = UIConfig(theme=normalize_theme(os.getenv("UI_THEME", str(persisted_ui.get("theme", DEFAULT_THEME)))))
+    hooks = HooksConfig(auto_report_on_finish=_env_bool("AUTO_REPORT_ON_FINISH", bool(persisted_hooks.get("auto_report_on_finish", False))))
+    gateway_mode = resolve_gateway_mode(os.getenv("GATEWAY_MODE", str(persisted_gateway.get("mode", DEFAULT_GATEWAY_MODE))))
     gateway_defaults = gateway_mode_defaults(gateway_mode)
     gateway = GatewayConfig(
         mode=gateway_mode,
-        host=os.getenv("ARES_GATEWAY_HOST", str(persisted_gateway.get("host", gateway_defaults["host"]))),
-        port=int(os.getenv("ARES_GATEWAY_PORT", str(persisted_gateway.get("port", DEFAULT_GATEWAY_PORT)))),
+        host=os.getenv("GATEWAY_HOST", str(persisted_gateway.get("host", gateway_defaults["host"]))),
+        port=int(os.getenv("GATEWAY_PORT", str(persisted_gateway.get("port", DEFAULT_GATEWAY_PORT)))),
         exposure=str(gateway_defaults["exposure"]),
-        auth_enabled=_env_bool("ARES_GATEWAY_AUTH_ENABLED", bool(persisted_gateway.get("auth_enabled", False))),
-        operator_token=os.getenv("ARES_GATEWAY_OPERATOR_TOKEN", str(persisted_gateway.get("operator_token", ""))),
+        auth_enabled=_env_bool("GATEWAY_AUTH_ENABLED", bool(persisted_gateway.get("auth_enabled", False))),
+        operator_token=os.getenv("GATEWAY_OPERATOR_TOKEN", str(persisted_gateway.get("operator_token", ""))),
         allow_cidrs=_normalize_strings(persisted_gateway.get("allow_cidrs")),
     )
-    agents = _load_agent_profiles(document)
-    return AppConfig(home=resolved_home, llm=llm, policy=policy, ui=ui, hooks=hooks, gateway=gateway, agents=agents)
+    onionclaw = OnionClawConfig(
+        enabled=_env_bool("ONIONCLAW_ENABLED", bool(persisted_onionclaw.get("enabled", False))),
+        repo_path=os.getenv("ONIONCLAW_REPO_PATH", str(persisted_onionclaw.get("repo_path", ""))).strip(),
+        python_bin=os.getenv("ONIONCLAW_PYTHON_BIN", str(persisted_onionclaw.get("python_bin", "python3"))).strip() or "python3",
+        env_path=os.getenv("ONIONCLAW_ENV_PATH", str(persisted_onionclaw.get("env_path", onionclaw_env_file_path(resolved_home)))).strip() or str(onionclaw_env_file_path(resolved_home)),
+        db_path=os.getenv("ONIONCLAW_DB_PATH", str(persisted_onionclaw.get("db_path", onionclaw_db_path(resolved_home)))).strip() or str(onionclaw_db_path(resolved_home)),
+    )
+    agents = _augment_agents_for_onionclaw(_load_agent_profiles(document), onionclaw)
+    return AppConfig(home=resolved_home, llm=llm, policy=policy, ui=ui, hooks=hooks, gateway=gateway, onionclaw=onionclaw, agents=agents)

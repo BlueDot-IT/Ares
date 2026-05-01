@@ -36,16 +36,16 @@ class RoutePolicy:
     @contextmanager
     def apply_for_target(self, target: str | None) -> Iterator[str]:
         route = self.route_for_target(target)
-        old_force = os.environ.get("ARES_FORCE_TOR")
+        old_force = os.environ.get("FORCE_TOR")
         try:
             if route == "tor":
-                os.environ["ARES_FORCE_TOR"] = "1"
+                os.environ["FORCE_TOR"] = "1"
             yield route
         finally:
             if old_force is None:
-                os.environ.pop("ARES_FORCE_TOR", None)
+                os.environ.pop("FORCE_TOR", None)
             else:
-                os.environ["ARES_FORCE_TOR"] = old_force
+                os.environ["FORCE_TOR"] = old_force
 
     @staticmethod
     def _target_to_host(target: str) -> str:

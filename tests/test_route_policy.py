@@ -21,18 +21,18 @@ class RoutePolicyTests(unittest.TestCase):
     def test_route_policy_context_sets_force_tor_env(self):
         from ares.policy.route import RoutePolicy
 
-        os.environ.pop("ARES_FORCE_TOR", None)
+        os.environ.pop("FORCE_TOR", None)
         policy = RoutePolicy(require_tor_for_external=True)
 
         with policy.apply_for_target("8.8.8.8"):
-            self.assertEqual(os.getenv("ARES_FORCE_TOR"), "1")
-        self.assertIsNone(os.getenv("ARES_FORCE_TOR"))
+            self.assertEqual(os.getenv("FORCE_TOR"), "1")
+        self.assertIsNone(os.getenv("FORCE_TOR"))
 
     def test_legacy_runner_wraps_subprocess_command_when_force_tor_enabled(self):
         from lib.mcp_server import _apply_tor_wrapper
 
         with patch("shutil.which", side_effect=lambda name: "/usr/bin/torsocks" if name == "torsocks" else None):
-            with patch.dict(os.environ, {"ARES_FORCE_TOR": "1"}, clear=False):
+            with patch.dict(os.environ, {"FORCE_TOR": "1"}, clear=False):
                 self.assertEqual(_apply_tor_wrapper(["curl", "https://example.com"]), ["torsocks", "curl", "https://example.com"])
 
 

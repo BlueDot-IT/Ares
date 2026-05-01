@@ -24,8 +24,8 @@ class ROEProfileTests(unittest.TestCase):
 
         old_env = os.environ.copy()
         try:
-            os.environ["ARES_ROE_PROFILE"] = "safe-active"
-            os.environ.pop("ARES_MAX_RISK", None)
+            os.environ["ROE_PROFILE"] = "safe-active"
+            os.environ.pop("MAX_RISK", None)
             cfg = load_config()
             self.assertEqual(cfg.policy.roe_profile, "safe-active")
             self.assertEqual(cfg.policy.max_risk, "active")

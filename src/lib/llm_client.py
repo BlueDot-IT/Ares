@@ -19,28 +19,28 @@ except Exception:  # pragma: no cover - optional provider dependency
 
 class Client:
     def __init__(self):
-        self.provider = os.getenv("ARES_LLM_PROVIDER", "openai").lower()
-        self.model = os.getenv("ARES_LLM_MODEL", "local-model")
+        self.provider = os.getenv("LLM_PROVIDER", "openai").lower()
+        self.model = os.getenv("LLM_MODEL", "local-model")
         
         # OpenAI / LM Studio / Local / Groq
         self.openai_client = OpenAI(
-            base_url=os.getenv("ARES_OPENAI_BASE_URL", "http://127.0.0.1:1234/v1"),
-            api_key=os.getenv("ARES_OPENAI_API_KEY", "lm-studio"),
+            base_url=os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:1234/v1"),
+            api_key=os.getenv("OPENAI_API_KEY", "lm-studio"),
         )
         
         # Anthropic
         self.anthropic_client = None
         if Anthropic is not None:
             self.anthropic_client = Anthropic(
-                api_key=os.getenv("ARES_ANTHROPIC_API_KEY", "")
+                api_key=os.getenv("ANTHROPIC_API_KEY", "")
             )
         
         # Gemini
-        gemini_key = os.getenv("ARES_GEMINI_API_KEY", "")
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
         self.gemini_client = genai.Client(api_key=gemini_key) if genai is not None and gemini_key else None
 
         # Ollama (Direct API)
-        self.ollama_base_url = os.getenv("ARES_OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 
     def generate_text(self, prompt: str, max_tokens: int = 1000) -> str:
         system_prompt = (

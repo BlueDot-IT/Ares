@@ -197,6 +197,41 @@ class AgentRoutingTests(unittest.TestCase):
         self.assertEqual(events[1]["type"], "route_selected")
         self.assertEqual(events[1]["agent"], "web")
 
+    def test_load_config_enables_default_darkweb_agent_and_route_when_onionclaw_enabled(self):
+        from ares.config.loader import load_config, save_onionclaw_config
+        from ares.routing import AgentRouter, apply_agent_profile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            save_onionclaw_config(home=home, enabled=True, repo_path="/opt/onionclaw")
+            config = load_config(home)
+            router = AgentRouter(config.agents)
+            resolution = router.resolve(prompt="inspect hidden service", target="http://examplehiddenservice.onion")
+            effective = apply_agent_profile(config, resolution)
+
+        self.assertIn("darkweb", config.agents.profiles)
+        self.assertEqual(resolution.agent_name, "darkweb")
+        self.assertEqual(resolution.reason, "route")
+        self.assertEqual(effective.agents.active_agent, "darkweb")
+        self.assertFalse(effective.policy.allow_private_only)
+        self.assertEqual(effective.onionclaw.repo_path, "/opt/onionclaw")
+        self.assertEqual(effective.agents.profiles["darkweb"].enabled_toolsets, ("onionclaw",))
+
+    def test_onionclaw_prompt_keywords_do_not_disable_private_only_without_onion_target(self):
+        from ares.config.loader import load_config, save_onionclaw_config
+        from ares.routing import AgentRouter, apply_agent_profile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            save_onionclaw_config(home=home, enabled=True, repo_path="/opt/onionclaw")
+            config = load_config(home)
+            router = AgentRouter(config.agents)
+            resolution = router.resolve(prompt="research darkweb brokers", target="https://example.com")
+            effective = apply_agent_profile(config, resolution)
+
+        self.assertEqual(resolution.agent_name, "default")
+        self.assertTrue(effective.policy.allow_private_only)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,11 +18,11 @@ class AresBrandingTests(unittest.TestCase):
     def test_load_config_uses_ares_environment_names(self):
         from ares.config.loader import load_config
 
-        old_values = {key: os.environ.get(key) for key in ["ARES_HOME", "ARES_LLM_MODEL"]}
+        old_values = {key: os.environ.get(key) for key in ["APP_HOME", "LLM_MODEL"]}
         try:
             with tempfile.TemporaryDirectory() as ares_tmp:
-                os.environ["ARES_HOME"] = ares_tmp
-                os.environ["ARES_LLM_MODEL"] = "ares-model"
+                os.environ["APP_HOME"] = ares_tmp
+                os.environ["LLM_MODEL"] = "ares-model"
 
                 cfg = load_config()
 

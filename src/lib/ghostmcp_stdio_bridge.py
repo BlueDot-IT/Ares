@@ -67,7 +67,7 @@ def main() -> None:
                 result = {
                     "protocolVersion": params.get("protocolVersion") or "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "ares-ghostmcp-bridge", "version": "0.1.0a0"},
+                    "serverInfo": {"name": "ares-ghostmcp-bridge", "version": "0.1.0b0"},
                 }
             elif method == "tools/list":
                 result = {"tools": _tool_inventory(runner)}

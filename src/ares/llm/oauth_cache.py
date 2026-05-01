@@ -32,7 +32,7 @@ class OAuthTokenCacheEntry:
 def resolve_home(home: Path | str | None = None) -> Path:
     if home is not None:
         return Path(home).expanduser()
-    return Path(os.getenv("ARES_HOME", DEFAULT_HOME)).expanduser()
+    return Path(os.getenv("APP_HOME", DEFAULT_HOME)).expanduser()
 
 
 def oauth_cache_dir(home: Path | str | None = None) -> Path:

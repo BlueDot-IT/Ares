@@ -157,7 +157,7 @@ class _ExternalGhostMCPClient:
         env = os.environ.copy()
         src_root = Path(__file__).resolve().parents[1]
         env["PYTHONPATH"] = str(src_root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-        env["ARES_GHOSTMCP_CHILD"] = "1"
+        env["GHOSTMCP_CHILD"] = "1"
         session = MCPProcessSession(
             MCPServerParameters(
                 command=[sys.executable, "-m", "lib.ghostmcp_stdio_bridge"],

@@ -67,6 +67,27 @@ class PolicyDispatchTests(unittest.TestCase):
 
         self.assertEqual(result, {"target": "127.0.0.1"})
 
+    def test_dispatch_blocks_out_of_scope_hostname_and_onion_target_when_private_only(self):
+        from ares.policy.context import PolicyContext
+        from ares.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register(
+            name="active_tool",
+            toolset="unit",
+            risk="active",
+            schema={"name": "active_tool", "description": "test", "parameters": {"type": "object"}},
+            handler=lambda args, **_: {"ok": True},
+        )
+
+        for target in ("https://example.com", "http://hiddenserviceexample.onion"):
+            with self.assertRaisesRegex(PermissionError, "scope"):
+                registry.dispatch(
+                    "active_tool",
+                    {"target": target},
+                    policy=PolicyContext(max_risk="active", allow_private_only=True),
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

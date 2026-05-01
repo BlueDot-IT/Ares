@@ -20,6 +20,7 @@ from ares.reporting.markdown import render_session_report
 from ares.routing import AgentRouter, apply_agent_profile
 from ares.state.db import StateDB
 from ares.tools.ghostmcp_adapter import register_ghostmcp_tools
+from ares.tools.onionclaw_adapter import register_onionclaw_tools
 from ares.tools.registry import ToolRegistry
 
 
@@ -30,9 +31,11 @@ def build_policy(config: AppConfig) -> PolicyContext:
     )
 
 
-def build_registry() -> ToolRegistry:
+def build_registry(config: AppConfig | None = None) -> ToolRegistry:
+    config = config or load_config()
     registry = ToolRegistry()
     register_ghostmcp_tools(registry)
+    register_onionclaw_tools(registry, config=config.onionclaw)
     return registry
 
 
@@ -70,7 +73,7 @@ def _build_single_model(
     return OpenAICompatModel(
         model=model,
         base_url=openai_base_url,
-        api_key=None if auth_mode == "oauth" else (api_key or os.getenv("ARES_OPENAI_API_KEY", "lm-studio")),
+        api_key=None if auth_mode == "oauth" else (api_key or os.getenv("OPENAI_API_KEY", "lm-studio")),
         provider=spec.name,
         auth_mode=auth_mode,
         oauth_token_command=oauth_token_command,
@@ -189,7 +192,7 @@ def list_registered_tools(registry: ToolRegistry) -> list[dict[str, Any]]:
 
 def build_doctor_snapshot(*, config: AppConfig | None = None, registry: ToolRegistry | None = None) -> dict[str, Any]:
     config = config or load_config()
-    registry = registry or build_registry()
+    registry = registry or build_registry(config)
     return {
         "home": str(config.home),
         "llm_provider": config.llm.provider,
@@ -201,6 +204,7 @@ def build_doctor_snapshot(*, config: AppConfig | None = None, registry: ToolRegi
         "active_agent": config.agents.active_agent,
         "agent_profiles": len(config.agents.profiles),
         "gateway": f"{config.gateway.host}:{config.gateway.port}",
+        "onionclaw_enabled": config.onionclaw.enabled,
         "auto_report_on_finish": config.hooks.auto_report_on_finish,
         "registered_tools": len(registry.check_tool_availability()),
     }
@@ -238,15 +242,15 @@ def build_model_snapshot(*, config: AppConfig | None = None) -> dict[str, Any]:
 
     return {
         "profile": profile_name,
-        "profile_source": _source("ARES_LLM_PROFILE", "profile"),
+        "profile_source": _source("LLM_PROFILE", "profile"),
         "provider": config.llm.provider,
-        "provider_source": _source("ARES_LLM_PROVIDER", "provider"),
+        "provider_source": _source("LLM_PROVIDER", "provider"),
         "model": config.llm.model,
-        "model_source": _source("ARES_LLM_MODEL", "model"),
+        "model_source": _source("LLM_MODEL", "model"),
         "base_url": config.llm.openai_base_url or "-",
-        "base_url_source": _source("ARES_OPENAI_BASE_URL", "openai_base_url"),
+        "base_url_source": _source("OPENAI_BASE_URL", "openai_base_url"),
         "auth_mode": config.llm.auth_mode,
-        "auth_mode_source": _source("ARES_LLM_AUTH_MODE", "auth_mode"),
+        "auth_mode_source": _source("LLM_AUTH_MODE", "auth_mode"),
         "fallbacks": list(config.llm.fallbacks),
         "fallbacks_source": f"config:{path}" if persisted.get("fallbacks") else "none",
         "config_path": str(path),
@@ -318,7 +322,7 @@ def run_once(
         roe_profile=config.policy.roe_profile,
     )
     config = apply_agent_profile(config, resolution)
-    registry = registry or build_registry()
+    registry = registry or build_registry(config)
     policy = build_policy(config)
     model = model or build_model(config)
     state_db = state_db or StateDB(config.home / "state.db")

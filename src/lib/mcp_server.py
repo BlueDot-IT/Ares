@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 # -------------------------------------------------
 
 def _apply_tor_wrapper(cmd: List[str]) -> List[str]:
-    if os.getenv("ARES_FORCE_TOR") != "1":
+    if os.getenv("FORCE_TOR") != "1":
         return cmd
     if not cmd or cmd[0] in {"torsocks", "proxychains4", "proxychains"}:
         return cmd
@@ -425,7 +425,7 @@ def _handle_request(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "protocolVersion": params.get("protocolVersion") or "2024-11-05",
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "ares-lib-mcp", "version": "0.1.0a0"},
+            "serverInfo": {"name": "ares-lib-mcp", "version": "0.1.0b0"},
         }
     if method == "ping":
         return {}

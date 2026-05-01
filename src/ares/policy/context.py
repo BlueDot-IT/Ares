@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from .risk import risk_allows
 
@@ -41,7 +41,10 @@ class PolicyContext:
         try:
             ip = ipaddress.ip_address(host)
         except ValueError:
-            # Hostname/domain validation will be added with ROE domain allowlists.
+            if self._is_private_hostname(host):
+                return
+            if self.allow_private_only:
+                raise PermissionError(f"scope policy violation: target {host!r} is not in allowed private scope")
             return
 
         if self.allowed_cidrs and any(ip in cidr for cidr in self.allowed_cidrs):
@@ -68,4 +71,16 @@ class PolicyContext:
         parsed = urlparse(target)
         if parsed.scheme and parsed.hostname:
             return parsed.hostname
-        return target.strip().strip("[]")
+        stripped = target.strip().strip("[]")
+        if ":" in stripped and not stripped.startswith(("http://", "https://", "tcp://", "ssh://")):
+            return urlsplit(f"//{stripped}").hostname or stripped
+        return stripped
+
+    @staticmethod
+    def _is_private_hostname(host: str) -> bool:
+        normalized = host.strip().strip(".").lower()
+        if not normalized:
+            return True
+        if ":" in normalized:
+            normalized = normalized.rsplit(":", 1)[0]
+        return normalized in {"localhost", "localhost.localdomain"} or normalized.endswith(".local")
