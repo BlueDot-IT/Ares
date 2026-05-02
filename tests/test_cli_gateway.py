@@ -24,9 +24,8 @@ class AresCliGatewayTests(unittest.TestCase):
 
     def _run_cli(self, *args: str, env: dict[str, str]) -> str:
         repo = Path(__file__).resolve().parents[1]
-        python_bin = repo / ".venv" / "bin" / "python"
         result = subprocess.run(
-            [str(python_bin), "-m", "ares.cli", *args],
+            [sys.executable, "-m", "ares.cli", *args],
             cwd=repo,
             env=env,
             check=True,

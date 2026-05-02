@@ -11,11 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 class AresCliYoloTests(unittest.TestCase):
     def _run_cli_help(self, *args: str) -> str:
         repo = Path(__file__).resolve().parents[1]
-        python_bin = repo / ".venv" / "bin" / "python"
         env = dict(os.environ)
         env["PYTHONPATH"] = str(repo / "src")
         result = subprocess.run(
-            [str(python_bin), "-m", "ares.cli", *args],
+            [sys.executable, "-m", "ares.cli", *args],
             cwd=repo,
             env=env,
             check=True,
@@ -30,7 +29,6 @@ class AresCliYoloTests(unittest.TestCase):
 
     def test_bare_ares_launches_tui(self):
         repo = Path(__file__).resolve().parents[1]
-        python_bin = repo / ".venv" / "bin" / "python"
         env = dict(os.environ)
         env["PYTHONPATH"] = str(repo / "src")
         script = """
@@ -51,7 +49,7 @@ print('RESULT_JSON=' + json.dumps({
 }))
 """
         result = subprocess.run(
-            [str(python_bin), "-c", script],
+            [sys.executable, "-c", script],
             cwd=repo,
             env=env,
             check=True,
