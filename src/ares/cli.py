@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import secrets
-from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -11,7 +10,6 @@ import typer
 from ares import APP_NAME, __version__
 from ares.config.loader import (
     apply_llm_profile,
-    available_llm_profiles,
     gateway_mode_defaults,
     load_config,
     reset_llm_config,
@@ -151,60 +149,6 @@ def _resolve_oauth_login_provider(*, provider: str | None, broker) -> str:
         use_tty=None,
     )
     return selected.strip().lower()
-
-
-def _run_model_setup_wizard(*, home: Path) -> None:
-    cfg = load_config(home)
-    profiles = available_llm_profiles()
-    default_profile = next((name for name in profiles if name == "local"), next(iter(profiles)))
-    profile_name = _prompt_choice(
-        f"Model profile ({', '.join([*profiles.keys(), 'custom'])})",
-        choices=[*profiles.keys(), "custom"],
-        default=default_profile,
-    )
-    if profile_name in profiles:
-        apply_llm_profile(home=home, profile=profile_name)
-        current = load_config(home)
-        provider_name = current.llm.provider
-    else:
-        current = cfg
-        provider_name = typer.prompt("Model provider", default=current.llm.provider or "openai").strip().lower() or "openai"
-
-    current = load_config(home)
-    model_name = typer.prompt("Model name", default=current.llm.model).strip() or current.llm.model
-    base_url: str | None = None
-    auth_mode = current.llm.auth_mode
-    oauth_token_command: str | None = None
-    oauth_project: str | None = None
-    oauth_location: str | None = None
-    if provider_name in {"openai", "local", "lm-studio", "ollama", "vllm", "llama-cpp", "openai-compatible", "custom"}:
-        base_url = typer.prompt("OpenAI-compatible base URL", default=current.llm.openai_base_url).strip()
-    if provider_name == "gemini" or (provider_name == "openai" and profile_name != "local"):
-        auth_mode = _prompt_choice(
-            "Model auth mode (api-key, oauth)",
-            choices=["api-key", "oauth"],
-            default=current.llm.auth_mode,
-        )
-        if auth_mode == "oauth":
-            oauth_token_command = typer.prompt(
-                "OAuth token command",
-                default=current.llm.oauth_token_command or ("gcloud auth application-default print-access-token" if provider_name == "gemini" else ""),
-            ).strip()
-            if provider_name == "gemini":
-                oauth_project = typer.prompt("OAuth project", default=current.llm.oauth_project).strip()
-                oauth_location = typer.prompt("OAuth location", default=current.llm.oauth_location or "us-central1").strip()
-
-    save_llm_config(
-        home=home,
-        provider=provider_name,
-        model=model_name,
-        openai_base_url=base_url,
-        profile=profile_name if profile_name in profiles else "",
-        auth_mode=auth_mode,
-        oauth_token_command=oauth_token_command,
-        oauth_project=oauth_project,
-        oauth_location=oauth_location,
-    )
 
 
 @app.command("onboard")

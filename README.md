@@ -64,6 +64,7 @@ python -m pip install -e .
 Optional extras:
 
 ```bash
+python -m pip install -e '.[dev]'
 python -m pip install -e '.[gui]'
 python -m pip install -e '.[anthropic]'
 python -m pip install -e '.[gemini]'
@@ -102,6 +103,9 @@ ares --version
 ares doctor
 ares tools
 ares sessions
+ares onboard
+ares gateway
+ares gateway-pair
 ares tui
 ```
 
@@ -266,7 +270,7 @@ Runtime core:
 
 ## Legacy GUI
 
-The old GUI remains available during transition:
+The old GUI remains available during transition, but it is not the primary supported v1 surface.
 
 ```bash
 . .venv/bin/activate
@@ -275,7 +279,13 @@ python src/main.py
 
 ## Tests
 
-Use the project test tree rather than bare repository-wide collection if vendored test packaging is not installed:
+For local development and verification, install the editable package, the vendored GhostMCP tree, and the dev extras first:
+
+```bash
+python -m pip install -e . -e vendor/ghostmcp -e '.[dev]'
+```
+
+Then run the project test tree and a compile check:
 
 ```bash
 python -m pytest tests -q
@@ -293,5 +303,7 @@ python -m pytest tests/test_onboard_cli.py tests/test_cli_model.py tests/test_mo
 ## Release guidance
 
 Ares should be treated as a supervised beta for authorized work. Keep human oversight in place, keep scopes explicit, and keep exploit and post-exploitation approvals outside the model.
+
+The v1 support boundary is documented in `docs/v1-support-boundary.md`.
 
 The `0.1.0b0` line is suitable for beta releases, internal operator testing, and reproducible packaged builds. The intended direction is to make Ares the strongest blend of Hermes-style agent execution and OpenClaw-style operator control for authorized pentesting, but this release should still be described as a supervised beta rather than a finished general-purpose platform.

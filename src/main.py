@@ -13,7 +13,7 @@ class PentestAgent(QApplication):
     def __init__(self, sys_argv):
         super().__init__(sys_argv)
         self.window = QMainWindow()
-        self.window.setWindowTitle("Ares")
+        self.window.setWindowTitle("Ares Legacy GUI")
         self.window.setFixedSize(900, 600)
         self.switcher = LayoutSwitcher()
         self.options = {}
