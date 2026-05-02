@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -13,6 +14,7 @@ class AresCliYoloTests(unittest.TestCase):
         repo = Path(__file__).resolve().parents[1]
         env = dict(os.environ)
         env["PYTHONPATH"] = str(repo / "src")
+        env["NO_COLOR"] = "1"
         result = subprocess.run(
             [sys.executable, "-m", "ares.cli", *args],
             cwd=repo,
@@ -21,7 +23,7 @@ class AresCliYoloTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        return result.stdout
+        return re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
 
     def test_run_help_lists_yolo_flag(self):
         help_text = self._run_cli_help("run", "--help")
