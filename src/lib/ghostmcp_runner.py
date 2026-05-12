@@ -302,6 +302,7 @@ def _import_installed_ghostmcp() -> ModuleType | None:
         _clear_partial_ghostmcp_imports()
 
     _ensure_fastmcp_available()
+    _ensure_defusedxml_available()
     try:
         return importlib.import_module("ghostmcp.server")
     except Exception:
@@ -317,6 +318,7 @@ def _import_vendored_ghostmcp() -> ModuleType | None:
         sys.path.insert(0, str(vendor_root))
     _clear_partial_ghostmcp_imports()
     _ensure_fastmcp_available()
+    _ensure_defusedxml_available()
     try:
         return importlib.import_module("ghostmcp.server")
     except Exception:
@@ -361,6 +363,22 @@ def _ensure_fastmcp_available() -> None:
     setattr(mcp_module, "server", server_module)
     setattr(server_module, "fastmcp", fastmcp_module)
     sys.modules["mcp.server.fastmcp"] = fastmcp_module
+
+
+def _ensure_defusedxml_available() -> None:
+    try:
+        importlib.import_module("defusedxml")
+        return
+    except Exception:
+        pass
+
+    xml_etree = importlib.import_module("xml.etree.ElementTree")
+    defusedxml_module = types.ModuleType("defusedxml")
+    setattr(defusedxml_module, "ElementTree", xml_etree)
+    sys.modules["defusedxml"] = defusedxml_module
+    sys.modules["defusedxml.ElementTree"] = xml_etree
+
+
 
 
 def _iter_module_tools(module: ModuleType) -> list[tuple[str, Callable[..., Any]]]:
