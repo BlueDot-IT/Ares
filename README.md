@@ -17,7 +17,7 @@ Release status: `0.1.0b0` with intended git tag `v0.1.0-beta`. This line is suit
 Repository layout:
 
 - `src/ares` - primary package, runtime core, CLI, and TUI
-- `src/lib`, `src/ui`, `src/main.py` - supporting MCP, GUI, and bridge entrypoints
+- `src/lib` - supporting MCP and bridge entrypoints
 
 The runtime now lives directly under the `ares` package.
 
@@ -65,7 +65,6 @@ Optional extras:
 
 ```bash
 python -m pip install -e '.[dev]'
-python -m pip install -e '.[gui]'
 python -m pip install -e '.[anthropic]'
 python -m pip install -e '.[gemini]'
 python -m pip install -e '.[ghostmcp]'
@@ -267,15 +266,6 @@ Runtime core:
 - `src/ares/evidence` - evidence parsers
 - `src/ares/reporting` - Markdown reports
 - `src/ares/run.py` - high-level runtime wiring
-
-## Legacy GUI
-
-The old GUI remains available during transition, but it is not the primary supported v1 surface.
-
-```bash
-. .venv/bin/activate
-python src/main.py
-```
 
 ## Tests
 

@@ -26,8 +26,8 @@
 - [x] Split supported v1 behavior from experimental or legacy behavior.
 - [x] Update release and install docs so they match the code.
 
-## Phase 5: Legacy GUI isolation
+## Phase 5: Legacy removal
 
-- [x] Mark the PySide6 GUI path as legacy or transitional.
+- [x] Remove the PySide6 GUI path and root-level legacy CLI/main entrypoints.
 - [x] Make the main Ares CLI/TUI/Gateway surfaces obvious.
-- [x] Ensure the legacy GUI cannot be mistaken for the primary supported path.
+- [x] Ensure release docs no longer describe removed legacy surfaces as supported.

@@ -37,7 +37,6 @@ Repository = "https://github.com/jason-allen-oneal/ares"
 Issues = "https://github.com/jason-allen-oneal/ares/issues"
 
 [project.optional-dependencies]
-gui = ["pyside6"]
 anthropic = ["anthropic"]
 gemini = ["google-genai"]
 ghostmcp = ["ghostmcp-server", "mcp"]

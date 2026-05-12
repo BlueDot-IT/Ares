@@ -17,12 +17,11 @@ This document defines the supported surface for the planned stable v1 line.
 - gateway auth and pairing behave the same in CLI, browser, and API flows
 - session persistence and Markdown reporting remain backward-compatible across patch releases
 
-## Legacy or transitional surfaces
+## Unsupported legacy surfaces
 
-- `src/main.py` and the PySide6 GUI under `src/ui/`
-- any ad hoc integration hooks or extra surfaces that are not listed above as part of the supported v1 path
+None. The old PySide6 GUI and root-level legacy CLI/main entrypoints were removed from the repository.
 
 ## Release rule of thumb
 
 If a feature is listed as supported here, do not break it in a patch release.
-If a feature is not listed here, it can remain transitional until the v1 line explicitly adopts it.
+If a feature is not listed here, it is not part of the supported v1 surface.
