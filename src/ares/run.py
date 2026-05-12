@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,7 @@ def build_policy(config: AppConfig) -> PolicyContext:
 def build_registry(config: AppConfig | None = None) -> ToolRegistry:
     config = config or load_config()
     registry = ToolRegistry()
-    register_ghostmcp_tools(registry)
+    register_ghostmcp_tools(registry, policy_allow_private_only=config.policy.allow_private_only)
     register_onionclaw_tools(registry, config=config.onionclaw)
     return registry
 
@@ -308,6 +309,7 @@ def run_once(
     max_iterations: int = 20,
     state_db: StateDB | None = None,
     approve_dangerous: bool = False,
+    policy_allow_private_only: bool | None = None,
     event_callback: callable | None = None,
     session_started_callback: callable | None = None,
     hook_manager: HookManager | None = None,
@@ -322,6 +324,8 @@ def run_once(
         roe_profile=config.policy.roe_profile,
     )
     config = apply_agent_profile(config, resolution)
+    if policy_allow_private_only is not None:
+        config = replace(config, policy=replace(config.policy, allow_private_only=policy_allow_private_only))
     registry = registry or build_registry(config)
     policy = build_policy(config)
     model = model or build_model(config)

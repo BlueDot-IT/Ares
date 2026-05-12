@@ -454,6 +454,28 @@ def save_ui_config(*, home: Path | str | None = None, theme: str | None = None) 
     return _write_config_document(document, home=home)
 
 
+def save_policy_config(
+    *,
+    home: Path | str | None = None,
+    allow_private_only: bool | None = None,
+    max_risk: str | None = None,
+) -> Path:
+    document = _load_config_document(home)
+    policy = document.get("policy")
+    if not isinstance(policy, dict):
+        policy = {}
+    if allow_private_only is not None:
+        policy["allow_private_only"] = bool(allow_private_only)
+    if max_risk is not None:
+        value = str(max_risk).strip()
+        if value:
+            policy["max_risk"] = value
+        else:
+            policy.pop("max_risk", None)
+    document["policy"] = policy
+    return _write_config_document(document, home=home)
+
+
 def save_hooks_config(*, home: Path | str | None = None, auto_report_on_finish: bool | None = None) -> Path:
     document = _load_config_document(home)
     hooks = document.get("hooks")
@@ -631,6 +653,7 @@ def load_config(home: Path | str | None = None) -> AppConfig:
     load_home_env(resolved_home, override=False)
     document = _load_config_document(resolved_home)
     persisted_llm = document.get("llm") if isinstance(document.get("llm"), dict) else {}
+    persisted_policy = document.get("policy") if isinstance(document.get("policy"), dict) else {}
     persisted_ui = document.get("ui") if isinstance(document.get("ui"), dict) else {}
     persisted_hooks = document.get("hooks") if isinstance(document.get("hooks"), dict) else {}
     persisted_gateway = document.get("gateway") if isinstance(document.get("gateway"), dict) else {}
@@ -658,8 +681,8 @@ def load_config(home: Path | str | None = None) -> AppConfig:
     profile = ROEProfileRegistry.builtin().get(roe_profile)
     policy = PolicyConfig(
         default_mode=default_mode,
-        allow_private_only=_env_bool("ALLOW_PRIVATE_ONLY", True),
-        max_risk=os.getenv("MAX_RISK", profile.max_risk),
+        allow_private_only=_env_bool("ALLOW_PRIVATE_ONLY", bool(persisted_policy.get("allow_private_only", True))),
+        max_risk=os.getenv("MAX_RISK", str(persisted_policy.get("max_risk", profile.max_risk))),
         roe_profile=roe_profile,
     )
     ui = UIConfig(theme=normalize_theme(os.getenv("UI_THEME", str(persisted_ui.get("theme", DEFAULT_THEME)))))

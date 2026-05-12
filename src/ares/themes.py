@@ -61,7 +61,7 @@ THEMES: dict[str, ThemeSpec] = {
             "separator": ThemeTone("green"),
             "user": ThemeTone("white", attrs=("bold",)),
             "assistant": ThemeTone("green"),
-            "stream": ThemeTone("cyan"),
+            "stream": ThemeTone("green"),
             "tool": ThemeTone("yellow", attrs=("bold",)),
             "result": ThemeTone("green", attrs=("bold",)),
             "input": ThemeTone("white", attrs=("bold",)),

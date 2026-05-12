@@ -10,6 +10,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from prompt_toolkit.clipboard.base import ClipboardData
+from prompt_toolkit.mouse_events import MouseEventType
+
 from ares import APP_NAME
 from ares.config.loader import (
     AppConfig,
@@ -18,6 +21,7 @@ from ares.config.loader import (
     load_config,
     reset_llm_config,
     save_llm_config,
+    save_policy_config,
     save_ui_config,
 )
 from ares.run import (
@@ -40,6 +44,7 @@ class BackgroundRunJob:
     prompt: str
     target: str | None = None
     approve_dangerous: bool = False
+    policy_allow_private_only: bool | None = None
     status: str = "queued"
     session_id: int | None = None
     final_response: str = ""
@@ -64,6 +69,9 @@ class AresTUIState:
     active_stream_index: int | None = None
     active_stream_provider: str | None = None
     scrollback_offset: int = 0
+    scrollback_follow_latest: bool = True
+    scrollback_anchor_total_lines: int = 0
+    screen_paused: bool = False
     should_exit: bool = False
 
 
@@ -81,6 +89,8 @@ def _fit_width(width: int, *, minimum: int = 72, maximum: int = 120) -> int:
 def _center_line(text: str, width: int) -> str:
     return _truncate(text, width).center(width)
 
+
+_SCROLL_WHEEL_STEP = 3
 
 _PROMPT_TOOLKIT_COLOR_MAP = {
     "default": "",
@@ -213,31 +223,20 @@ def build_startup_hero(*, width: int = 84) -> str:
 def build_help_text() -> str:
     return "\n".join(
         [
-            "Help",
-            "====",
             "Slash Commands",
-            "/help               show this command reference",
-            "/commands           alias for /help",
-            "/tools              list registered tools",
-            "/sessions           list stored sessions",
-            "/inspect [id]       inspect a session in detail",
-            "/messages [id]      show recent conversation and tool results",
-            "/live               show current background execution activity",
-            "/doctor             show runtime configuration snapshot",
-            "/model              show or update model/provider/base URL",
-            "/theme              show, preview, or switch among dark themes",
-            "/report [id]        write a Markdown report for a session",
-            "/target <target>    set the default authorized target",
-            "/scope [mode]       toggle target scope: private or public",
-            "/yolo               toggle dangerous-tool approval for new runs",
-            "/clear              clear the transcript",
-            "/quit               exit the operator shell",
-            "",
-            "Chat Flow",
-            "- Type a normal message to launch a run.",
-            "- Tool calls and results stream inline in the transcript.",
-            "- PageUp/PageDown scroll transcript history; Home jumps to oldest; End returns to latest output.",
-            "- Reports are written under APP_HOME/reports.",
+            "===============",
+            "Session Control",
+            "- /help, /commands, /clear, /quit",
+            "- /sessions, /inspect [id], /messages [id], /live",
+            "Config",
+            "- /doctor, /model, /theme, /target <target>, /scope [mode], /report [id]",
+            "Tools",
+            "- /tools, /copy [mode], /paste",
+            "Navigation",
+            "- PageUp/PageDown scroll history",
+            "- Home jumps to oldest, End returns to latest",
+            "- mouse wheel scrolls history",
+            "- Ctrl+Y or Shift+Insert / Ctrl+V paste",
         ]
     )
 
@@ -283,6 +282,8 @@ def build_operator_shell_text(
     background_job: BackgroundRunJob | None,
     width: int = 100,
     yolo_mode: bool = False,
+    screen_paused: bool = False,
+    scrollback_follow_latest: bool = True,
     theme_name: str = DEFAULT_THEME,
     allow_private_only: bool = True,
 ) -> str:
@@ -290,19 +291,20 @@ def build_operator_shell_text(
     session_label = str(selected_session_id) if selected_session_id is not None else "-"
     job_status = background_job.status if background_job is not None else "idle"
     yolo_label = "ON" if yolo_mode else "off"
+    view_label = "live" if scrollback_follow_latest else "history"
     scope_label = "private" if allow_private_only else "public"
     theme = get_theme(theme_name)
     transcript_text = build_chat_transcript_text(transcript, width=width)
     separator = theme.separator * width
     lines = [
         build_startup_hero(width=width),
-        f"target: {target or '-'} | scope: {scope_label} | theme: {theme.name} | session: {session_label} | job: {job_status} | yolo: {yolo_label}",
+        f"target: {target or '-'} | scope: {scope_label} | theme: {theme.name} | session: {session_label} | job: {job_status} | yolo: {yolo_label} | view: {view_label}",
         f"status: {status_message}",
         "commands: type /commands for a list",
         separator,
         transcript_text,
         separator,
-        f"{theme.prompt_prefix}{input_buffer}",
+        f"operator > {input_buffer}" if input_buffer else "operator >",
     ]
     return "\n".join(lines)
 
@@ -338,6 +340,17 @@ def build_dashboard_text(
             f"latest_status: {latest.get('status') or '-'}",
         ]
     )
+
+
+def _build_clipboard_backend() -> Any:
+    try:
+        from prompt_toolkit.clipboard.pyperclip import PyperclipClipboard
+
+        return PyperclipClipboard()
+    except Exception:  # pragma: no cover - clipboard backend fallback
+        from prompt_toolkit.clipboard.in_memory import InMemoryClipboard
+
+        return InMemoryClipboard()
 
 
 def build_screen_frame(
@@ -539,14 +552,27 @@ def _build_doctor_text(config: AppConfig, registry: ToolRegistry) -> str:
 
 
 class BackgroundRunController:
-    def __init__(self, run_callable: Callable[..., Any] = run_once) -> None:
+    def __init__(self, run_callable: Callable[..., Any] = run_once, on_change: Callable[[], None] | None = None) -> None:
         self.run_callable = run_callable
+        self.on_change = on_change
         self.current_job: BackgroundRunJob | None = None
         self.jobs: list[BackgroundRunJob] = []
         self._lock = threading.Lock()
 
-    def start_job(self, *, prompt: str, target: str | None = None, approve_dangerous: bool = False) -> BackgroundRunJob:
-        job = BackgroundRunJob(prompt=prompt, target=target, approve_dangerous=approve_dangerous)
+    def start_job(
+        self,
+        *,
+        prompt: str,
+        target: str | None = None,
+        approve_dangerous: bool = False,
+        policy_allow_private_only: bool | None = None,
+    ) -> BackgroundRunJob:
+        job = BackgroundRunJob(
+            prompt=prompt,
+            target=target,
+            approve_dangerous=approve_dangerous,
+            policy_allow_private_only=policy_allow_private_only,
+        )
         with self._lock:
             self.current_job = job
             self.jobs.append(job)
@@ -561,6 +587,8 @@ class BackgroundRunController:
 
         def on_session_started(session_id: int) -> None:
             job.session_id = session_id
+            if self.on_change is not None:
+                self.on_change()
 
         def on_event(event: dict[str, Any]) -> None:
             job.events.append(dict(event))
@@ -568,12 +596,15 @@ class BackgroundRunController:
                 job.session_id = int(event["session_id"])
             if event.get("type") == "final_response":
                 job.final_response = str(event.get("final_response") or "")
+            if self.on_change is not None:
+                self.on_change()
 
         try:
             result = self.run_callable(
                 prompt=job.prompt,
                 target=job.target,
                 approve_dangerous=job.approve_dangerous,
+                policy_allow_private_only=job.policy_allow_private_only,
                 event_callback=on_event,
                 session_started_callback=on_session_started,
             )
@@ -602,9 +633,70 @@ class AresTUI:
         self.registry = build_registry()
         self.state_db = StateDB(self.config.home / "state.db")
         self.state = AresTUIState(approve_dangerous=yolo_mode)
-        self.background_runs = BackgroundRunController(run_callable=run_once)
+        self.background_runs = BackgroundRunController(run_callable=run_once, on_change=self._notify_background_change)
         self._color_roles: dict[str, int] = {}
         self._active_palette_theme: str | None = None
+        self._prompt_toolkit_app: Any | None = None
+        self._prompt_toolkit_input: Any | None = None
+        self._suspend_redraw: bool = False
+
+    def _request_redraw(self) -> None:
+        if self._suspend_redraw:
+            return
+        app = self._prompt_toolkit_app
+        if app is not None:
+            try:
+                app.invalidate()
+            except Exception:
+                pass
+
+    def _notify_background_change(self) -> None:
+        if not self.state.screen_paused:
+            self._request_redraw()
+
+    def _enter_history_view(self, *, total_lines: int | None = None) -> None:
+        self.state.scrollback_follow_latest = False
+        if total_lines is not None:
+            self.state.scrollback_anchor_total_lines = max(0, int(total_lines))
+
+    def _follow_latest_view(self, *, total_lines: int | None = None) -> None:
+        self.state.scrollback_follow_latest = True
+        self.state.scrollback_offset = 0
+        if total_lines is not None:
+            self.state.scrollback_anchor_total_lines = max(0, int(total_lines))
+
+    def _set_input_buffer_text(self, text: str) -> None:
+        clean = str(text)
+        self.state.input_buffer = clean
+        input_widget = self._prompt_toolkit_input
+        if input_widget is not None:
+            try:
+                input_widget.text = clean
+            except Exception:
+                pass
+        self._request_redraw()
+
+    def _copy_clipboard_text_to_input(self, *, append: bool = False) -> bool:
+        try:
+            clipboard = _build_clipboard_backend()
+            text = clipboard.get_data().text
+        except Exception:
+            return False
+        if append and self.state.input_buffer:
+            self._set_input_buffer_text(f"{self.state.input_buffer}{text}")
+        else:
+            self._set_input_buffer_text(text)
+        return True
+
+    def _pause_screen(self) -> None:
+        self.state.screen_paused = True
+        self.state.status_message = "screen paused"
+        self._request_redraw()
+
+    def _resume_screen(self) -> None:
+        self.state.screen_paused = False
+        self.state.status_message = "screen resumed"
+        self._request_redraw()
 
     def _append_transcript(self, kind: str, text: str) -> None:
         clean = str(text).strip()
@@ -617,6 +709,7 @@ class AresTUI:
         self.state.transcript.append({"kind": kind, "text": clean})
         if len(self.state.transcript) > 160:
             self.state.transcript = self.state.transcript[-120:]
+        self._request_redraw()
 
     def _finalize_active_stream(self, final_text: str | None = None) -> None:
         index = self.state.active_stream_index
@@ -628,6 +721,7 @@ class AresTUI:
                 self.state.transcript[index] = {"kind": "assistant", "text": replacement}
         self.state.active_stream_index = None
         self.state.active_stream_provider = None
+        self._request_redraw()
 
     def _append_stream_delta(self, provider: str, text: str) -> None:
         chunk = str(text)
@@ -640,6 +734,7 @@ class AresTUI:
             if entry.get("kind") == "assistant_stream" and self.state.active_stream_provider == provider_name:
                 entry["text"] = f"{entry.get('text', '')}{chunk}"
                 self.state.status_message = f"streaming {provider_name}"
+                self._request_redraw()
                 return
         self.state.transcript.append({"kind": "assistant_stream", "text": f"[{provider_name}] {chunk}"})
         self.state.active_stream_index = len(self.state.transcript) - 1
@@ -648,8 +743,12 @@ class AresTUI:
         if len(self.state.transcript) > 160:
             self.state.transcript = self.state.transcript[-120:]
             self.state.active_stream_index = len(self.state.transcript) - 1
+        self._request_redraw()
 
     def _refresh_handles(self) -> None:
+        if self.state.screen_paused:
+            self.state.last_refresh_ts = time.time()
+            return
         self.config = load_config()
         self.registry = build_registry()
         self.state_db = StateDB(self.config.home / "state.db")
@@ -674,8 +773,11 @@ class AresTUI:
             self.state.selected_session_id,
             direction,
         )
+        self._request_redraw()
 
     def _ingest_background_events(self) -> None:
+        if self.state.screen_paused:
+            return
         job = self.background_runs.current_job
         if job is None:
             self.state.tracked_job_token = None
@@ -688,8 +790,14 @@ class AresTUI:
             self.state.processed_event_count = 0
 
         new_events = job.events[self.state.processed_event_count :]
-        for event in new_events:
-            self._handle_runtime_event(event)
+        if not new_events:
+            return
+        self._suspend_redraw = True
+        try:
+            for event in new_events:
+                self._handle_runtime_event(event)
+        finally:
+            self._suspend_redraw = False
         self.state.processed_event_count = len(job.events)
 
     def _handle_runtime_event(self, event: dict[str, Any]) -> None:
@@ -748,6 +856,8 @@ class AresTUI:
             background_job=self.background_runs.current_job,
             width=width,
             yolo_mode=self.state.approve_dangerous,
+            screen_paused=self.state.screen_paused,
+            scrollback_follow_latest=self.state.scrollback_follow_latest,
             theme_name=self.config.ui.theme,
             allow_private_only=self.config.policy.allow_private_only,
         )
@@ -757,10 +867,12 @@ class AresTUI:
             prompt=prompt,
             target=self.state.current_target,
             approve_dangerous=self.state.approve_dangerous,
+            policy_allow_private_only=self.config.policy.allow_private_only,
         )
         self.state.tracked_job_token = id(job)
         self.state.processed_event_count = 0
         self.state.status_message = f"running: {_truncate(prompt, 72)}"
+        self._request_redraw()
 
     def _resolve_session_id(self, raw: str | None = None) -> int | None:
         if raw and raw.strip():
@@ -921,6 +1033,7 @@ class AresTUI:
             self._append_transcript("system", "usage: /scope [public|private]")
             return
         os.environ["ALLOW_PRIVATE_ONLY"] = "true" if private_only else "false"
+        save_policy_config(home=self.config.home, allow_private_only=private_only)
         self.config = load_config(self.config.home)
         if private_only:
             self.state.status_message = "scope: private-only"
@@ -944,9 +1057,45 @@ class AresTUI:
         if command in {"help", "commands"}:
             self._append_transcript("assistant", build_help_text())
             return
+        if command == "copy":
+            mode = arg.strip().lower()
+            if mode in {"", "transcript", "chat", "log"}:
+                text = self._copy_transcript_text()
+                label = "transcript"
+            elif mode in {"screen", "frame", "view"}:
+                text = self._copy_screen_text()
+                label = "screen"
+            else:
+                self._append_transcript("system", "usage: /copy [transcript|screen]")
+                return
+            self.state.status_message = f"{label} copied to clipboard" if self._copy_to_clipboard(text) else "copy failed"
+            self._request_redraw()
+            return
+        if command == "paste":
+            mode = arg.strip().lower()
+            if mode in {"", "replace", "insert"}:
+                append = False
+            elif mode in {"append", "add"}:
+                append = True
+            else:
+                self._append_transcript("system", "usage: /paste [replace|append]")
+                return
+            if self._copy_clipboard_text_to_input(append=append):
+                self.state.status_message = "clipboard pasted into prompt"
+            else:
+                self.state.status_message = "paste failed"
+            self._request_redraw()
+            return
+        if command in {"pause", "freeze"}:
+            self._pause_screen()
+            return
+        if command in {"resume", "unpause"}:
+            self._resume_screen()
+            return
         if command in {"clear", "new", "reset"}:
             self.state.transcript.clear()
             self.state.status_message = "transcript cleared"
+            self._request_redraw()
             return
         if command == "tools":
             self._append_transcript("assistant", _build_tools_text(self.registry))
@@ -1163,7 +1312,7 @@ class AresTUI:
             curses.wrapper(self._loop)
 
     def _prompt_toolkit_body_text(self, *, columns: int | None = None, rows: int | None = None) -> str:
-        return "".join(text for _, text in self._prompt_toolkit_body_fragments(columns=columns, rows=rows)).rstrip("\n")
+        return "".join(fragment[1] for fragment in self._prompt_toolkit_body_fragments(columns=columns, rows=rows)).rstrip("\n")
 
     def _prompt_toolkit_frame_lines(self, *, columns: int | None = None) -> tuple[list[str], int]:
         if columns is None:
@@ -1180,9 +1329,22 @@ class AresTUI:
             rows = shutil.get_terminal_size((100, 30)).lines
         height = max(1, int(rows) - 1)
         frame_lines, _ = self._prompt_toolkit_frame_lines(columns=columns)
-        max_offset = max(0, len(frame_lines) - height)
+        total_lines = len(frame_lines)
+        max_offset = max(0, total_lines - height)
+
+        if self.state.scrollback_follow_latest:
+            self.state.scrollback_offset = 0
+            self.state.scrollback_anchor_total_lines = total_lines
+        else:
+            anchor = int(self.state.scrollback_anchor_total_lines or total_lines)
+            if total_lines != anchor:
+                self.state.scrollback_offset = max(0, int(self.state.scrollback_offset) + (total_lines - anchor))
+                self.state.scrollback_anchor_total_lines = total_lines
+            if self.state.scrollback_offset <= 0:
+                self._follow_latest_view(total_lines=total_lines)
+
         self.state.scrollback_offset = max(0, min(int(self.state.scrollback_offset), max_offset))
-        end = len(frame_lines) - self.state.scrollback_offset
+        end = total_lines - self.state.scrollback_offset
         start = max(0, end - height)
         return frame_lines[start:end]
 
@@ -1191,14 +1353,50 @@ class AresTUI:
             rows = shutil.get_terminal_size((100, 30)).lines
         height = max(1, int(rows) - 1)
         frame_lines, _ = self._prompt_toolkit_frame_lines(columns=columns)
-        max_offset = max(0, len(frame_lines) - height)
-        self.state.scrollback_offset = max(0, min(max_offset, int(self.state.scrollback_offset) + int(delta)))
+        total_lines = len(frame_lines)
+        max_offset = max(0, total_lines - height)
+        new_offset = max(0, min(max_offset, int(self.state.scrollback_offset) + int(delta)))
+        self.state.scrollback_offset = new_offset
+        if new_offset == 0:
+            self._follow_latest_view(total_lines=total_lines)
+        else:
+            self._enter_history_view(total_lines=total_lines)
+        self._request_redraw()
 
-    def _prompt_toolkit_body_fragments(self, *, columns: int | None = None, rows: int | None = None) -> list[tuple[str, str]]:
+    def _copy_to_clipboard(self, text: str) -> bool:
+        try:
+            clipboard = _build_clipboard_backend()
+            clipboard.set_data(ClipboardData(text))
+            return True
+        except Exception:
+            return False
+
+    def _copy_transcript_text(self, *, width: int | None = None) -> str:
+        if width is None:
+            width = shutil.get_terminal_size((100, 30)).columns
+        return build_chat_transcript_text(self.state.transcript, width=max(72, int(width) - 1))
+
+    def _copy_screen_text(self, *, width: int | None = None) -> str:
+        if width is None:
+            width = shutil.get_terminal_size((100, 30)).columns
+        return self._prompt_toolkit_body_text(columns=max(72, int(width) - 1))
+
+    def _prompt_toolkit_body_fragments(self, *, columns: int | None = None, rows: int | None = None) -> list[tuple[str, str] | tuple[str, str, Callable[[Any], Any]]]:
         visible_lines = self._prompt_toolkit_visible_lines(columns=columns, rows=rows)
-        fragments: list[tuple[str, str]] = []
+
+        def mouse_handler(mouse_event: Any) -> Any:
+            event_type = getattr(mouse_event, "event_type", None)
+            if event_type == MouseEventType.SCROLL_UP:
+                self._scroll_body(delta=_SCROLL_WHEEL_STEP, columns=columns, rows=rows)
+                return None
+            if event_type == MouseEventType.SCROLL_DOWN:
+                self._scroll_body(delta=-_SCROLL_WHEEL_STEP, columns=columns, rows=rows)
+                return None
+            return NotImplemented
+
+        fragments: list[tuple[str, str] | tuple[str, str, Callable[[Any], Any]]] = []
         for index, line in enumerate(visible_lines):
-            fragments.append((f"class:{self._line_role(line)}", line))
+            fragments.append((f"class:{self._line_role(line)}", line, mouse_handler))
             if index < len(visible_lines) - 1:
                 fragments.append(("", "\n"))
         return fragments
@@ -1227,9 +1425,16 @@ class AresTUI:
         except Exception as exc:  # pragma: no cover - rich is a Typer dependency in normal installs
             raise ImportError("rich is required for the prompt_toolkit Ares TUI") from exc
 
+        try:
+            clipboard = _build_clipboard_backend()
+        except Exception:  # pragma: no cover - clipboard backend fallback
+            from prompt_toolkit.clipboard.in_memory import InMemoryClipboard
+
+            clipboard = InMemoryClipboard()
+
         console = Console(force_terminal=True, color_system="auto", width=120)
 
-        def body_text() -> list[tuple[str, str]]:
+        def body_text() -> list[tuple[str, str] | tuple[str, str, Callable[[Any], Any]]]:
             return self._prompt_toolkit_body_fragments()
 
         body = Window(
@@ -1269,13 +1474,21 @@ class AresTUI:
         def _(event: Any) -> None:
             self._scroll_body(delta=-max(1, shutil.get_terminal_size((100, 30)).lines - 3))
 
+        @kb.add("c-y")
+        @kb.add("s-insert")
+        @kb.add("c-v")
+        def _(event: Any) -> None:
+            input_field.buffer.paste_clipboard_data(event.app.clipboard.get_data())
+
         @kb.add("home")
         def _(event: Any) -> None:
             self._scroll_body(delta=10**9)
 
         @kb.add("end")
         def _(event: Any) -> None:
-            self.state.scrollback_offset = 0
+            total_lines = len(self._prompt_toolkit_frame_lines()[0])
+            self._follow_latest_view(total_lines=total_lines)
+            self._request_redraw()
 
         @kb.add("c-c")
         @kb.add("escape")
@@ -1286,12 +1499,19 @@ class AresTUI:
         app = Application(
             layout=Layout(HSplit([body, input_field]), focused_element=input_field),
             key_bindings=kb,
+            clipboard=clipboard,
             full_screen=True,
-            refresh_interval=max(0.1, float(self.refresh_interval)),
-            mouse_support=False,
+            refresh_interval=None,
+            mouse_support=True,
             style=DynamicStyle(lambda: self._prompt_toolkit_style()),
         )
-        app.run()
+        self._prompt_toolkit_app = app
+        self._prompt_toolkit_input = input_field
+        try:
+            app.run()
+        finally:
+            self._prompt_toolkit_app = None
+            self._prompt_toolkit_input = None
 
 
 def launch_tui(*, refresh_interval: float = 0.5, yolo_mode: bool = False) -> None:

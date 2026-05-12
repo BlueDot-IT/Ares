@@ -26,7 +26,7 @@ class PlaybookRegistry:
                         "1. Confirm scope and route policy.\n"
                         "2. Start with passive DNS/WHOIS/TLS where applicable.\n"
                         "3. Move to safe active service enumeration only within risk ceiling.\n"
-                        "4. Store evidence and terminate on diminishing returns."
+                        "4. Store evidence and keep enumerating until coverage is exhausted."
                     ),
                 ),
                 Playbook(

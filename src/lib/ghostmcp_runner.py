@@ -7,10 +7,11 @@ import os
 import subprocess
 import sys
 import types
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
-from typing import Any, Callable, Dict
+from types import ModuleType, UnionType
+from typing import Any, Callable, Dict, get_args, get_origin
 
 from lib.mcp_session import MCPProcessSession, MCPServerParameters
 
@@ -26,6 +27,56 @@ class ToolSpec:
     input_schema: dict[str, Any] | None = None
 
 
+def _json_schema_for_annotation(annotation: Any) -> dict[str, Any]:
+    if annotation in {inspect._empty, Any}:
+        return {"type": "string"}
+    origin = get_origin(annotation)
+    if origin is UnionType or str(origin).endswith("typing.Union"):
+        args = [arg for arg in get_args(annotation) if arg is not type(None)]
+        if len(args) == 1:
+            return _json_schema_for_annotation(args[0])
+        return {"type": "string"}
+    if origin in {list, tuple, set}:
+        item_args = get_args(annotation)
+        item_schema = _json_schema_for_annotation(item_args[0]) if item_args else {"type": "string"}
+        return {"type": "array", "items": item_schema}
+    if origin in {dict, Dict}:
+        return {"type": "object", "additionalProperties": True}
+    if annotation in {str}:
+        return {"type": "string"}
+    if annotation in {int}:
+        return {"type": "integer"}
+    if annotation in {float}:
+        return {"type": "number"}
+    if annotation in {bool}:
+        return {"type": "boolean"}
+    return {"type": "string"}
+
+
+def _schema_for_callable(fn: Callable[..., Any]) -> dict[str, Any]:
+    try:
+        signature = inspect.signature(fn)
+    except Exception:
+        return {"type": "object", "properties": {}}
+
+    parameters = list(signature.parameters.values())
+    if len(parameters) == 1 and parameters[0].name in {"args", "_"}:
+        return {"type": "object", "properties": {}, "additionalProperties": True}
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for param in parameters:
+        if param.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+            continue
+        properties[param.name] = _json_schema_for_annotation(param.annotation)
+        if param.default is inspect._empty:
+            required.append(param.name)
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
+
+
 class GhostMCPToolRunner:
     """GhostMCP tool runner with optional external stdio transport.
 
@@ -35,10 +86,13 @@ class GhostMCPToolRunner:
       - inproc: load tools inside the current process.
     """
 
-    def __init__(self, transport: str = "auto") -> None:
+    def __init__(self, transport: str = "auto", allow_private_only: bool | None = None) -> None:
         self.transport = transport
         self._client: _ExternalGhostMCPClient | None = None
         self._tools: dict[str, ToolSpec] = {}
+        self._env_overrides: dict[str, str] = {}
+        if allow_private_only is not None:
+            self._env_overrides["GHOSTMCP_ALLOW_PRIVATE_ONLY"] = "true" if allow_private_only else "false"
         if transport == "auto":
             try:
                 self._init_external()
@@ -106,7 +160,7 @@ class GhostMCPToolRunner:
             self._client = None
 
     def _init_external(self) -> None:
-        client = _ExternalGhostMCPClient()
+        client = _ExternalGhostMCPClient(env_overrides=self._env_overrides)
         metadata = client.handshake()
         self._client = client
         self._tools = {
@@ -124,37 +178,59 @@ class GhostMCPToolRunner:
 
     def _init_inproc(self) -> None:
         self._tools = {}
-        for module, source in _load_tool_modules():
-            for raw_name, fn in _iter_module_tools(module):
-                name = _normalize_tool_name(raw_name)
-                if name in self._tools:
-                    continue
-                try:
-                    signature = str(inspect.signature(fn))
-                except Exception:
-                    signature = "(…)"
-                self._tools[name] = ToolSpec(
-                    name=name,
-                    fn=fn,
-                    signature=signature,
-                    source=source,
-                    raw_name=raw_name,
-                    description=(inspect.getdoc(fn) or "").strip(),
-                    input_schema={"type": "object", "additionalProperties": True},
-                )
+        with self._patched_environment():
+            for module, source in _load_tool_modules():
+                for raw_name, fn in _iter_module_tools(module):
+                    name = _normalize_tool_name(raw_name)
+                    if name in self._tools:
+                        continue
+                    try:
+                        signature = str(inspect.signature(fn))
+                    except Exception:
+                        signature = "(…)"
+                    self._tools[name] = ToolSpec(
+                        name=name,
+                        fn=fn,
+                        signature=signature,
+                        source=source,
+                        raw_name=raw_name,
+                        description=(inspect.getdoc(fn) or "").strip(),
+                        input_schema=_schema_for_callable(fn),
+                    )
+
+    def _patched_environment(self):
+        @contextmanager
+        def _manager():
+            if not self._env_overrides:
+                yield
+                return
+            previous = {key: os.environ.get(key) for key in self._env_overrides}
+            try:
+                os.environ.update(self._env_overrides)
+                yield
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        return _manager()
 
     def __del__(self) -> None:  # pragma: no cover - best effort cleanup
         self._close_client()
 
 
 class _ExternalGhostMCPClient:
-    def __init__(self) -> None:
+    def __init__(self, env_overrides: dict[str, str] | None = None) -> None:
         self.session: MCPProcessSession | None = None
+        self._env_overrides = dict(env_overrides or {})
 
     def handshake(self) -> dict[str, dict[str, Any]]:
         if self.session is not None:
             raise RuntimeError("GhostMCP external bridge already started")
         env = os.environ.copy()
+        env.update(self._env_overrides)
         src_root = Path(__file__).resolve().parents[1]
         env["PYTHONPATH"] = str(src_root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         env["GHOSTMCP_CHILD"] = "1"

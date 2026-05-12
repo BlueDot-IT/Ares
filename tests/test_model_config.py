@@ -102,6 +102,30 @@ class ModelConfigTests(unittest.TestCase):
                 else:
                     os.environ[key] = value
 
+    def test_load_config_uses_persisted_policy_allow_private_only_and_env_overrides(self):
+        from ares.config.loader import load_config, save_policy_config
+
+        keys = ["APP_HOME", "ALLOW_PRIVATE_ONLY"]
+        old_values = {key: os.environ.get(key) for key in keys}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ["APP_HOME"] = tmp
+                os.environ.pop("ALLOW_PRIVATE_ONLY", None)
+
+                save_policy_config(home=Path(tmp), allow_private_only=False)
+                cfg = load_config()
+                self.assertFalse(cfg.policy.allow_private_only)
+
+                os.environ["ALLOW_PRIVATE_ONLY"] = "true"
+                cfg = load_config()
+                self.assertTrue(cfg.policy.allow_private_only)
+        finally:
+            for key, value in old_values.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     def test_named_model_profiles_and_ui_theme_persist_in_config(self):
         from ares.config.loader import apply_llm_profile, load_config, save_ui_config
 
@@ -142,6 +166,17 @@ class ModelConfigTests(unittest.TestCase):
         self.assertEqual(home_mode, 0o700)
         self.assertTrue(cfg.gateway.auth_enabled)
         self.assertTrue(cfg.gateway.operator_token)
+
+    def test_save_policy_config_persists_max_risk_and_allow_private_only(self):
+        from ares.config.loader import load_config, save_policy_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            save_policy_config(home=home, allow_private_only=False, max_risk="intrusive")
+            cfg = load_config(home)
+
+        self.assertFalse(cfg.policy.allow_private_only)
+        self.assertEqual(cfg.policy.max_risk, "intrusive")
 
     def test_provider_catalog_exposes_endpoint_and_auth_capabilities(self):
         from ares.llm.provider_catalog import get_provider_choice, list_provider_choices

@@ -2,20 +2,34 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from threading import Lock
 
 from lib.ghostmcp_runner import GhostMCPToolRunner
 
 from .registry import ToolRegistry, registry as default_registry
 
 
-_DEFAULT_RUNNER: GhostMCPToolRunner | None = None
+_DEFAULT_RUNNERS: dict[bool | None, GhostMCPToolRunner] = {}
+_DEFAULT_RUNNERS_LOCK = Lock()
 
 
-def get_default_ghostmcp_runner() -> GhostMCPToolRunner:
-    global _DEFAULT_RUNNER
-    if _DEFAULT_RUNNER is None:
-        _DEFAULT_RUNNER = GhostMCPToolRunner()
-    return _DEFAULT_RUNNER
+def get_default_ghostmcp_runner(allow_private_only: bool | None = None) -> GhostMCPToolRunner:
+    with _DEFAULT_RUNNERS_LOCK:
+        runner = _DEFAULT_RUNNERS.get(allow_private_only)
+        if runner is None:
+            runner = GhostMCPToolRunner(allow_private_only=allow_private_only)
+            _DEFAULT_RUNNERS[allow_private_only] = runner
+        return runner
+
+
+def reset_default_ghostmcp_runner_cache() -> None:
+    with _DEFAULT_RUNNERS_LOCK:
+        for runner in _DEFAULT_RUNNERS.values():
+            try:
+                runner.close()
+            except Exception:
+                pass
+        _DEFAULT_RUNNERS.clear()
 
 
 PASSIVE_TOOL_HINTS = (
@@ -66,13 +80,15 @@ def register_ghostmcp_tools(
     *,
     toolset: str = "ghostmcp",
     runner: GhostMCPToolRunner | None = None,
+    policy_allow_private_only: bool | None = None,
 ) -> int:
     """Discover GhostMCP tools and register them into a ToolRegistry.
 
     The default runner now prefers a persistent external stdio bridge and falls
     back to the in-process GhostMCP loader when needed.
     """
-    runner = runner or get_default_ghostmcp_runner()
+    if runner is None:
+        runner = get_default_ghostmcp_runner(policy_allow_private_only)
     count = 0
     for name, tool_info in sorted(runner.tools.items()):
         schema = _schema_for_tool(name, tool_info)

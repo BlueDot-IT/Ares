@@ -39,6 +39,34 @@ from lib.reporting_engine import generate_markdown_report
 
 class Orchestrator:
     _REQUIRED_TOOL_ARGS: Dict[str, list[str]] = {}
+    _WEB_SERVICE_PORTS: set[int] = {
+        80,
+        81,
+        443,
+        3000,
+        3001,
+        4000,
+        4200,
+        5000,
+        5001,
+        5173,
+        5601,
+        591,
+        7000,
+        7001,
+        8000,
+        8008,
+        8080,
+        8081,
+        8088,
+        8443,
+        8888,
+        9000,
+        9001,
+        9090,
+        9443,
+        9999,
+    }
 
     def __init__(self):
         # GhostMCP runs in-process (imported as a module via submodule + editable install)
@@ -239,8 +267,8 @@ class Orchestrator:
 
     def _coverage_summary(self, conversation: list[dict]) -> dict:
         """
-        Tracks whether we've attempted reasonable followups.
-        This is used to allow termination after diminishing returns.
+        Tracks whether we've attempted the follow-up families needed to fully enumerate
+        the services discovered so far.
         """
         open_ports = self._extract_open_tcp_ports(conversation)
         fp = self._ports_fingerprint(open_ports)
@@ -256,6 +284,7 @@ class Orchestrator:
         needs_mysql = False
         needs_tor = False
         needs_banner = False
+        needs_http = False
 
         for _t, items in (open_ports or {}).items():
             for it in items:
@@ -267,9 +296,25 @@ class Orchestrator:
                     needs_tor = True
                 if port in (1234,) or svc in ("unknown", "hotline", "netconf-ch-tls"):
                     needs_banner = True
+                if isinstance(port, int) and (
+                    port in self._WEB_SERVICE_PORTS
+                    or any(token in svc for token in ("http", "https", "ssl/http", "web", "www"))
+                ):
+                    needs_http = True
 
-        # Minimum “reasonable enum” set: run nmap_full once, plus at least one followup family.
-        followup_ok = has_nmap_scripts or has_banner or has_http or (needs_mysql and has_mysql) or (needs_tor and has_tor)
+        required_followups: list[str] = []
+        if open_ports and not has_nmap_scripts:
+            required_followups.append("nmap_scripts")
+        if needs_http and not has_http:
+            required_followups.append("http_probe")
+        if needs_banner and not has_banner:
+            required_followups.append("banner_grab")
+        if needs_mysql and not has_mysql:
+            required_followups.append("mysql_enum")
+        if needs_tor and not has_tor:
+            required_followups.append("tor_check")
+
+        enumeration_complete = has_nmap_full and not required_followups
 
         return {
             "open_ports": open_ports,
@@ -283,9 +328,12 @@ class Orchestrator:
             "needs_mysql_enum": needs_mysql,
             "needs_tor_check": needs_tor,
             "needs_banner_grab": needs_banner,
-            "followup_ok": followup_ok,
+            "needs_http_probe": needs_http,
+            "required_followups": required_followups,
+            "missing_followups": required_followups,
+            "enumeration_complete": enumeration_complete,
+            "followup_ok": enumeration_complete,
         }
-
     # -----------------------------
     # Duplicate / loop guards
     # -----------------------------
@@ -509,6 +557,10 @@ Coverage status:
 - needs_mysql_enum: {coverage["needs_mysql_enum"]}
 - needs_tor_check: {coverage["needs_tor_check"]}
 - needs_banner_grab: {coverage["needs_banner_grab"]}
+- needs_http_probe: {coverage["needs_http_probe"]}
+- required_followups: {coverage["required_followups"]}
+- missing_followups: {coverage["missing_followups"]}
+- enumeration_complete: {coverage["enumeration_complete"]}
 
 Previous steps:
 {history_block if history else "None"}
@@ -533,18 +585,13 @@ Rules:
 Progress rules (STRICT):
 - Do NOT repeat the same expensive scan if it already succeeded and port discovery did not change.
   - Specifically: do NOT call nmap_full again if you already ran it on the same target.
-- If open ports exist, you MUST choose a follow-up action that increases information:
-  - Prefer nmap_scripts for service/version + safe scripts.
-  - Prefer banner_grab for unknown/nonstandard services (e.g. hotline/unknown/netconf-ch-tls/high ports).
-  - Prefer mysql_enum when MySQL is open.
-  - Prefer tor_check when tor ports are open.
-  - Use http_probe only if you suspect HTTP services.
+- If missing_followups is non-empty, you MUST choose one of those follow-up tools next.
+- A stable port fingerprint alone is not enough to terminate.
+- Prefer breadth-first enumeration: nmap_full first, then nmap_scripts, then service-specific follow-ups.
 
 Termination rules:
-- You may terminate AFTER diminishing returns if you have:
-  - run nmap_full at least once, AND
-  - attempted at least one meaningful follow-up (nmap_scripts OR banner_grab OR mysql_enum OR tor_check OR http_probe), AND
-  - there is no clear next tool that would add new information.
+- You may terminate ONLY when enumeration_complete is true.
+- If a tool fails or is blocked, try a lower-risk or more specific alternative before stopping.
 
 Terminate format:
 {{
@@ -700,8 +747,20 @@ Terminate format:
                 emit(f"[!] Max action steps reached ({MAX_ACTION_STEPS}); stopping to avoid infinite loop.")
                 break
 
-            # Explicit termination (now allowed under diminishing returns)
+            # Explicit termination is only allowed once enumeration is complete.
             if tool == "terminate":
+                coverage = self._coverage_summary(conversation)
+                if not coverage["enumeration_complete"]:
+                    emit("[!] Planner tried to terminate before enumeration was complete; continuing.")
+                    conversation.append({
+                        "tool": "planner_guard",
+                        "args": {"reason": "premature_terminate", "missing": coverage["missing_followups"]},
+                        "result": {
+                            "note": "Continue enumeration until required follow-up tools are exhausted.",
+                            "coverage": coverage,
+                        },
+                    })
+                    continue
                 emit("[*] Termination requested by planner")
                 break
 
@@ -748,7 +807,7 @@ Terminate format:
                     },
                 })
 
-                # If we're stable and have already tried followups, allow termination via diminishing returns
+                # If we're stable but coverage is incomplete, keep pushing the planner toward missing follow-ups.
                 coverage = self._coverage_summary(conversation)
                 current_fp = coverage["ports_fingerprint"]
                 if current_fp == last_fp:
@@ -757,13 +816,13 @@ Terminate format:
                     stable_fp_count = 0
                     last_fp = current_fp
 
-                if stable_fp_count >= 3 and coverage["has_nmap_full"] and coverage["followup_ok"]:
-                    emit("[*] Diminishing returns detected (stable port fingerprint + followups attempted). Allowing planner to terminate.")
+                if stable_fp_count >= 3 and not coverage["enumeration_complete"]:
+                    emit("[*] Stable port fingerprint detected, but enumeration is still incomplete; continuing.")
                     conversation.append({
                         "tool": "planner_guard",
-                        "args": {"reason": "diminishing_returns"},
+                        "args": {"reason": "incomplete_coverage", "missing": coverage["missing_followups"]},
                         "result": {
-                            "note": "You may now terminate. Open ports exist but enumeration has plateaued given available tools/binaries.",
+                            "note": "Continue enumerating the remaining follow-up tools before terminating.",
                             "coverage": coverage,
                         },
                     })

@@ -21,7 +21,8 @@ class PromptBuilderTests(unittest.TestCase):
         self.assertIn("max_risk: active", prompt)
         self.assertIn("Never act outside scope", prompt)
         self.assertIn("Use tools instead of guessing", prompt)
-        self.assertIn("Terminate", prompt)
+        self.assertIn("coverage is exhausted", prompt)
+        self.assertIn("terminate only when no additional retrievable information remains", prompt)
         self.assertIn("Start passive", prompt)
 
 
@@ -67,6 +68,7 @@ class PlaybookLoaderTests(unittest.TestCase):
 
         self.assertIn("web-application-enum", names)
         self.assertTrue(any("Probe HTTP" in p.content for p in selected))
+        self.assertTrue(any("coverage is exhausted" in p.content for p in registry.playbooks))
 
 
 if __name__ == "__main__":

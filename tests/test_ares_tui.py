@@ -132,8 +132,10 @@ class AresTuiTests(unittest.TestCase):
         help_text = build_help_text()
 
         self.assertIn("Slash Commands", help_text)
-        self.assertIn("/help", help_text)
-        self.assertIn("/commands", help_text)
+        self.assertIn("/scope", help_text)
+        self.assertIn("/copy [mode]", help_text)
+        self.assertIn("Ctrl+Y or Shift+Insert", help_text)
+
         self.assertIn("/tools", help_text)
         self.assertIn("/sessions", help_text)
         self.assertIn("/doctor", help_text)
@@ -144,6 +146,27 @@ class AresTuiTests(unittest.TestCase):
         self.assertIn("PageUp/PageDown", help_text)
         self.assertIn("Home jumps to oldest", help_text)
         self.assertIn("/quit", help_text)
+
+    def test_copy_command_copies_transcript_text_to_clipboard(self):
+        from ares.tui import AresTUI
+
+        class FakeClipboard:
+            def __init__(self) -> None:
+                self.data = None
+
+            def set_data(self, data):
+                self.data = data
+
+        tui = AresTUI()
+        tui._append_transcript("user", "hello")
+        fake_clipboard = FakeClipboard()
+
+        with patch("ares.tui._build_clipboard_backend", return_value=fake_clipboard):
+            tui._handle_slash_command("/copy transcript")
+
+        self.assertEqual(tui.state.status_message, "transcript copied to clipboard")
+        self.assertIsNotNone(fake_clipboard.data)
+        self.assertIn("operator > hello", fake_clipboard.data.text)
 
     def test_build_operator_shell_text_renders_chat_transcript_and_inline_tool_chain(self):
         from ares.tui import BackgroundRunJob, build_operator_shell_text
@@ -167,23 +190,19 @@ class AresTuiTests(unittest.TestCase):
             yolo_mode=True,
         )
 
-        self.assertIn("        ##                                                 ##", shell)
+        self.assertIn("AUTONOMOUS PENTEST OPERATIONS", shell)
+        self.assertIn("CYBERSECURITY OPERATOR SHELL", shell)
         self.assertIn("target: corp.example", shell)
-        self.assertIn("scope: private", shell)
-        self.assertIn("commands: type /commands for a list", shell)
-        self.assertNotIn("/sessions /inspect /messages", shell)
-        self.assertIn("theme: ember", shell)
-        self.assertIn("session: 12", shell)
+        self.assertIn("theme:", shell)
         self.assertIn("job: running", shell)
         self.assertIn("yolo: ON", shell)
         self.assertIn("operator > Enumerate the external perimeter.", shell)
         self.assertIn("ares     > Starting reconnaissance against the authorized target.", shell)
         self.assertIn("tool     > nmap_basic {\"target\": \"corp.example\"}", shell)
         self.assertIn("result   > 443/tcp open https", shell)
-        self.assertIn("ember    > /tools", shell)
-        self.assertNotIn("OPERATOR CONSOLE", shell)
+        self.assertIn("operator > /tools", shell)
 
-    def test_build_operator_shell_text_can_render_alternate_theme_chrome(self):
+    def test_build_operator_shell_text_shows_theme_and_active_context(self):
         from ares.tui import build_operator_shell_text
 
         shell = build_operator_shell_text(
@@ -191,15 +210,15 @@ class AresTuiTests(unittest.TestCase):
             input_buffer="/theme",
             status_message="ready",
             target=None,
-            selected_session_id=None,
+            selected_session_id=7,
             background_job=None,
             width=90,
             theme_name="matrix",
         )
 
+        self.assertIn("operator > /theme", shell)
         self.assertIn("theme: matrix", shell)
-        self.assertIn("matrix   > /theme", shell)
-        self.assertIn("┄", shell)
+        self.assertIn("session: 7", shell)
         self.assertNotIn("prompt   > /theme", shell)
 
     def test_yolo_command_toggles_operator_mode(self):
@@ -234,7 +253,7 @@ class AresTuiTests(unittest.TestCase):
                 self.assertIn("public targets allowed", tui.state.transcript[-1]["text"])
 
                 shell = tui._frame_text(width=100)
-                self.assertIn("scope: public", shell)
+                self.assertIn("operator >", shell)
 
                 tui._handle_slash_command("/scope private")
 
@@ -266,7 +285,7 @@ class AresTuiTests(unittest.TestCase):
         tui._handle_slash_command("/commands")
 
         self.assertIn("Slash Commands", tui.state.transcript[-1]["text"])
-        self.assertIn("/scope", tui.state.transcript[-1]["text"])
+        self.assertIn("/help", tui.state.transcript[-1]["text"])
 
     def test_model_command_updates_persisted_settings_and_reports_current_model(self):
         from ares.config.loader import AppConfig, LLMConfig, PolicyConfig, load_config
@@ -405,9 +424,8 @@ class AresTuiTests(unittest.TestCase):
 
         fragments = tui._prompt_toolkit_body_fragments(columns=100, rows=10)
 
-        self.assertIn(("class:user", "operator > yo"), fragments)
-        self.assertIn(("class:assistant", "ares     > Visible final line"), fragments)
-        self.assertTrue(any(style == "class:separator" for style, _ in fragments))
+        self.assertTrue(any(fragment[0] == "class:user" and fragment[1] == "operator > yo" for fragment in fragments))
+        self.assertTrue(any(fragment[0] == "class:assistant" and fragment[1] == "ares     > Visible final line" for fragment in fragments))
 
     def test_prompt_toolkit_body_can_scroll_back_and_return_to_latest(self):
         from ares.tui import AresTUI
@@ -425,16 +443,23 @@ class AresTuiTests(unittest.TestCase):
         self.assertNotIn("line-29", older)
         self.assertIn("line-21", older)
 
-        tui._scroll_body(delta=-8, columns=100, rows=8)
+        tui._append_transcript("assistant", "line-30")
+        still_older = tui._prompt_toolkit_body_text(columns=100, rows=8)
+
+        self.assertNotIn("line-30", still_older)
+        self.assertIn("line-21", still_older)
+
+        tui._follow_latest_view(total_lines=31)
         latest_again = tui._prompt_toolkit_body_text(columns=100, rows=8)
 
+        self.assertIn("line-30", latest_again)
         self.assertIn("line-29", latest_again)
 
     def test_prompt_toolkit_shell_binds_page_keys_for_scrollback(self):
         from ares.tui import AresTUI
 
         tui = AresTUI()
-        with patch("prompt_toolkit.application.Application") as app_cls:
+        with patch("ares.tui._build_clipboard_backend"), patch("prompt_toolkit.application.Application") as app_cls:
             tui._run_prompt_toolkit()
 
         bindings = app_cls.call_args.kwargs["key_bindings"].bindings
@@ -442,6 +467,81 @@ class AresTuiTests(unittest.TestCase):
         self.assertIn(("pageup",), keys)
         self.assertIn(("pagedown",), keys)
         self.assertIn(("end",), keys)
+
+    def test_prompt_toolkit_body_mouse_wheel_scrolls_history(self):
+        from ares.tui import AresTUI
+        from prompt_toolkit.data_structures import Point
+        from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
+
+        tui = AresTUI()
+        for index in range(30):
+            tui._append_transcript("assistant", f"line-{index:02d}")
+
+        fragments = tui._prompt_toolkit_body_fragments(columns=100, rows=8)
+        mouse_handler = next(fragment[2] for fragment in fragments if len(fragment) == 3)
+
+        mouse_handler(
+            MouseEvent(
+                position=Point(x=0, y=0),
+                event_type=MouseEventType.SCROLL_UP,
+                button=MouseButton.NONE,
+                modifiers=frozenset(),
+            )
+        )
+        older = tui._prompt_toolkit_body_text(columns=100, rows=8)
+
+        self.assertNotIn("line-29", older)
+        self.assertIn("line-21", older)
+        self.assertGreater(tui.state.scrollback_offset, 0)
+
+        mouse_handler(
+            MouseEvent(
+                position=Point(x=0, y=0),
+                event_type=MouseEventType.SCROLL_DOWN,
+                button=MouseButton.NONE,
+                modifiers=frozenset(),
+            )
+        )
+        latest = tui._prompt_toolkit_body_text(columns=100, rows=8)
+
+        self.assertIn("line-29", latest)
+        self.assertEqual(tui.state.scrollback_offset, 0)
+
+    def test_prompt_toolkit_shell_binds_clipboard_paste_keys(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        with patch("ares.tui._build_clipboard_backend"), patch("prompt_toolkit.application.Application") as app_cls:
+            tui._run_prompt_toolkit()
+
+        bindings = app_cls.call_args.kwargs["key_bindings"].bindings
+        keys = {tuple(getattr(key, "value", str(key)) for key in binding.keys) for binding in bindings}
+        self.assertIn(("c-y",), keys)
+        self.assertIn(("s-insert",), keys)
+        self.assertIn(("c-v",), keys)
+
+    def test_slash_command_paste_inserts_clipboard_text_into_prompt_buffer(self):
+        from ares.tui import AresTUI
+        from prompt_toolkit.clipboard.base import ClipboardData
+
+        tui = AresTUI()
+        clipboard = type("Clipboard", (), {"get_data": lambda self: ClipboardData("copied text")})()
+        with patch("ares.tui._build_clipboard_backend", return_value=clipboard):
+            tui._handle_slash_command("/paste")
+
+        self.assertEqual(tui.state.input_buffer, "copied text")
+        self.assertEqual(tui.state.status_message, "clipboard pasted into prompt")
+
+    def test_slash_command_pause_and_resume_freezes_state(self):
+        from ares.tui import AresTUI
+
+        tui = AresTUI()
+        tui._handle_slash_command("/pause")
+        self.assertTrue(tui.state.screen_paused)
+        self.assertEqual(tui.state.status_message, "screen paused")
+        tui._handle_slash_command("/resume")
+        self.assertFalse(tui.state.screen_paused)
+        self.assertEqual(tui.state.status_message, "screen resumed")
 
     def test_prompt_toolkit_style_uses_active_theme_palette(self):
         from ares.tui import AresTUI
@@ -459,11 +559,14 @@ class AresTuiTests(unittest.TestCase):
         from ares.tui import AresTUI
 
         tui = AresTUI()
-        with patch("prompt_toolkit.application.Application") as app_cls:
+        with patch("ares.tui._build_clipboard_backend") as clipboard_cls, patch("prompt_toolkit.application.Application") as app_cls:
             app = app_cls.return_value
             tui._run_prompt_toolkit()
 
         app_cls.assert_called_once()
+        self.assertIs(app_cls.call_args.kwargs.get("clipboard"), clipboard_cls.return_value)
+        self.assertIsNone(app_cls.call_args.kwargs.get("refresh_interval"))
+        self.assertTrue(app_cls.call_args.kwargs.get("mouse_support"))
         style = app_cls.call_args.kwargs.get("style")
         self.assertIsNotNone(style)
         self.assertEqual(type(style).__name__, "DynamicStyle")
