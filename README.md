@@ -12,57 +12,47 @@ Authorized testing only. Do not use Ares against systems you do not own or do no
 
 ## Current state
 
-The current runtime includes:
+The runtime includes:
 
 - multi-provider model execution through OpenAI-compatible endpoints plus native Anthropic and Gemini adapters
 - model fallback chains so a primary model can fail over to configured alternates
 - OpenAI and Gemini OAuth credential helpers, with API-key paths for other providers
 - a central `ToolRegistry` with model-facing schemas, availability checks, risk levels, and toolset metadata
 - dispatcher-owned enforcement for scope, ROE, risk, approval gates, duplicate suppression, target route policy, and optional tool timeouts
-- compact and long-context modes, controlled by `ARES_CONTEXT_*` environment variables
+- compact and long-context modes controlled by `ARES_CONTEXT_*` environment variables
 - automatic indexing of useful tool results into SQLite-backed `memory_chunks`
 - passive recall tools: `ares.memory.search` and `ares.evidence.get_tool_call`
-- GhostMCP integration and a bounded OnionClaw integration for Tor-routed research, fetch, offline analysis, keyword extraction, and export helpers
+- GhostMCP integration and a bounded OnionClaw integration
 - SQLite persistence for sessions, messages, tool calls, hosts, services, and memory chunks, with FTS5 search when available and LIKE fallback when it is not
 - normalized evidence parsing and Markdown report generation
 - agent profiles with provider/model overrides, enabled and disabled toolsets, prompt prefixes, memory tags, and route matching
-- file-based engagement memory captured from completed runs and fed back as untrusted historical context
-- operator surfaces through a Typer CLI, a prompt_toolkit/Rich TUI, and a lightweight HTTP gateway with browser UI, event polling, bearer auth, pairing codes, CIDR allowlists, and JSONL audit events
 - redacted training-data export from clean completed sessions into JSONL
-- guided onboarding for model setup, theme, gateway exposure, hooks, OpenAI OAuth, and Gemini OAuth credential caching
+- three distinct operator surfaces: gateway, dashboard, and TUI
 
-The shorter version: Ares narrows the useful parts of Hermes and OpenClaw onto authorized security work, with the model kept behind policy, evidence, and operator control.
+The supported v1 boundary is tracked in `docs/v1-support-boundary.md`.
 
 ## Repository layout
 
 ```text
 src/ares/
-  agent/
-    context_builder.py       compact and long context assembly
-    context_budget.py        token budget helper for long-context mode
-    context_config.py        ARES_CONTEXT_* environment parsing
-    dispatcher.py            central tool-call choke point and memory indexing
-    tool_result_indexer.py   redacted tool-result memory summaries
-  config/                    environment and persisted JSON config loading
-  evidence/                  parsers that normalize tool output into reusable findings
-  llm/                       OpenAI-compatible, Anthropic, Gemini, failover, OAuth helpers
-  policy/                    scope, risk, ROE, and target route controls
-  reporting/                 Markdown report rendering
-  state/db.py                SQLite persistence and memory-chunk retrieval
-  tools/
-    evidence_memory.py       passive model-visible evidence recall tools
-    ghostmcp_adapter.py      GhostMCP tool integration
-    onionclaw_adapter.py     bounded OnionClaw integration
-  training/export.py         redacted JSONL training-data export
-  cli.py                     primary Typer command surface
-  gateway.py                 lightweight HTTP control plane and browser UI server
-  run.py                     high-level runtime wiring
-src/lib/                     supporting MCP and bridge entrypoints
-docs/long-context-vllm.md    vLLM long-context setup notes
-vendor/                      vendored GhostMCP tree when installed for local testing
+  agent/                    runtime loop, dispatcher, context, memory indexing
+  config/                   environment and persisted JSON config loading
+  dashboard.py              browser dashboard launcher and asset boundary
+  evidence/                 parsers that normalize tool output into findings
+  gateway.py                HTTP API/control plane
+  gateway_auth.py           bearer session and pairing auth
+  llm/                      model adapters, fallback, OAuth helpers
+  policy/                   scope, risk, ROE, and target route controls
+  reporting/                Markdown report rendering
+  state/db.py               SQLite persistence and memory-chunk retrieval
+  tools/                    central registry plus GhostMCP, OnionClaw, evidence memory
+  training/export.py        redacted JSONL training-data export
+  tui.py                    terminal operator UI
+  webui.py                  compatibility asset builders used by dashboard.py
+src/lib/                    supporting MCP and bridge entrypoints
+docs/long-context-vllm.md   vLLM long-context setup notes
+vendor/                     vendored GhostMCP tree when installed for local testing
 ```
-
-The supported v1 boundary is tracked in `docs/v1-support-boundary.md`.
 
 ## Install
 
@@ -92,8 +82,6 @@ python -m pip install -e . -e vendor/ghostmcp -e '.[dev]'
 ```
 
 ## First run
-
-Run the guided setup:
 
 ```bash
 ares onboard
@@ -151,11 +139,87 @@ ares theme <name>
 ares onboard
 ares gateway-config
 ares gateway
+ares dashboard
 ares gateway-pair
 ares tui
+ares-dashboard
+ares-tui
 ```
 
-The CLI entrypoint is `ares`. A secondary script, `ares-tui`, launches the TUI directly.
+## Operator surfaces
+
+Ares separates the three operator surfaces instead of treating the browser UI as the gateway.
+
+### Gateway
+
+The gateway is the backend API/control plane. It owns auth, pairing, allowlists, run submission, run status, event polling, and audit logging.
+
+```bash
+ares gateway
+```
+
+Configure exposure before remote use:
+
+```bash
+ares gateway-config --mode loopback
+ares gateway-config --mode lan --auth-enabled
+ares gateway-config --mode exposed --auth-enabled --allow-cidr 203.0.113.0/24
+```
+
+Gateway modes:
+
+- `loopback` binds for local use and rejects non-loopback clients
+- `lan` allows loopback, private, and link-local clients
+- `exposed` allows remote clients, so use bearer auth and a CIDR allowlist
+
+Pairing flow against a running gateway:
+
+```bash
+ares gateway-pair --label laptop
+```
+
+### Dashboard
+
+The dashboard is the browser frontend backed by the gateway API. It can run as `ares dashboard` or the direct console script `ares-dashboard`.
+
+```bash
+ares dashboard
+# or
+ares-dashboard
+```
+
+The dashboard command starts the same gateway API/control plane and opens the dashboard URL by default. Use `--no-open` when launching on a remote server or inside automation:
+
+```bash
+ares dashboard --mode lan --no-open
+```
+
+The gateway still serves dashboard assets at `/` and `/dashboard` for bundled local use, but the dashboard code boundary lives in `src/ares/dashboard.py`.
+
+### TUI
+
+The TUI is the terminal frontend. It is separate from the browser dashboard.
+
+```bash
+ares tui
+# or
+ares-tui
+```
+
+Useful slash commands:
+
+```text
+/commands          show the full command list
+/target <target>   set the default authorized target
+/scope public      allow authorized public targets in this TUI process
+/scope private     return to private or loopback target scope only
+/yolo              toggle higher-risk approval for new runs
+/model             show or update provider/model/base URL
+/theme             list, preview, or switch themes
+/live              show current background run events
+/report [id]       write a Markdown report for a session
+/quit              exit
+```
 
 ## Model providers and auth
 
@@ -222,103 +286,9 @@ The model can use two passive evidence tools when the registry is built for an a
 
 Cross-session raw tool-call recall is blocked by default and requires operator approval before it should be exposed.
 
-## Long-context vLLM setup
-
 For long-context local inference, see `docs/long-context-vllm.md`.
 
-The current long-context guide is written around `Qwen/Qwen2.5-7B-Instruct-1M` behind vLLM, with 128K as the recommended starting point and 256K as a follow-up test target after 128K is stable.
-
-Minimal vLLM-style Ares config:
-
-```bash
-export LLM_PROVIDER=custom
-export LLM_MODEL="Qwen/Qwen2.5-7B-Instruct-1M"
-export OPENAI_BASE_URL="http://127.0.0.1:8000/v1"
-export OPENAI_API_KEY="local-not-used"
-
-export ARES_CONTEXT_MODE=long
-export ARES_CONTEXT_WINDOW=131072
-export ARES_RESERVED_OUTPUT_TOKENS=8192
-```
-
-Then test with a short private-scope run before attempting large evidence-heavy prompts:
-
-```bash
-ares doctor
-ares run \
-  --target 127.0.0.1 \
-  --prompt "Use only passive inspection. Summarize available context and stop." \
-  --max-iterations 3
-```
-
-## TUI
-
-Launch the operator shell:
-
-```bash
-ares tui
-```
-
-The TUI uses a Hermes-style `prompt_toolkit` input loop with Rich styling and keeps the original curses loop as an import-time fallback. It is chat-first, keeps compact top chrome, and preserves the Ares ASCII banner.
-
-Useful slash commands:
-
-```text
-/commands          show the full command list
-/target <target>   set the default authorized target
-/scope public      allow authorized public targets in this TUI process
-/scope private     return to private or loopback target scope only
-/yolo              toggle higher-risk approval for new runs
-/model             show or update provider/model/base URL
-/theme             list, preview, or switch themes
-/live              show current background run events
-/report [id]       write a Markdown report for a session
-/quit              exit
-```
-
-Useful keys:
-
-- `PageUp` and `PageDown` scroll transcript history
-- `Home` jumps to the oldest visible transcript output
-- `End` returns to live output
-- `Up` and `Down` move the selected stored session
-- `Ctrl-C` or `Escape` exits the TUI
-
-Scope defaults remain conservative. Public target testing is opt-in and process-local from the TUI. Use `/scope private` when done. To make public-target scope persistent across restarts, set `ALLOW_PRIVATE_ONLY=false` in the process environment or `~/.ares/.env`.
-
-## Gateway and browser UI
-
-Start the lightweight control plane:
-
-```bash
-ares gateway
-```
-
-Configure exposure before remote use:
-
-```bash
-ares gateway-config --mode loopback
-ares gateway-config --mode lan --auth-enabled
-ares gateway-config --mode exposed --auth-enabled --allow-cidr 203.0.113.0/24
-```
-
-Gateway modes:
-
-- `loopback` binds for local use and rejects non-loopback clients
-- `lan` allows loopback, private, and link-local clients
-- `exposed` allows remote clients, so use bearer auth and a CIDR allowlist
-
-Pairing flow:
-
-```bash
-ares gateway-pair --label laptop
-```
-
-The gateway exposes a small browser UI plus JSON endpoints for health, run submission, run status, event polling, login, pairing, and pairing-code issuance. Auth events are written to `~/.ares/gateway-audit.jsonl`.
-
 ## Agent routing and engagement memory
-
-Ares can route work to named agent profiles based on prompt content, target properties, private/public scope, ROE profile, or an explicit `--agent` request.
 
 Preview routing without running tools:
 
@@ -335,7 +305,7 @@ ares memory --tag darkweb
 ares memory --query "nmap"
 ```
 
-This command lists engagement summaries under `~/.ares/memory/engagements`. The searchable `memory_chunks` table is separate and is queried by long-context assembly and the passive `ares.memory.search` tool.
+The `ares memory` command lists engagement summaries under `~/.ares/memory/engagements`. The searchable `memory_chunks` table is separate and is queried by long-context assembly and the passive `ares.memory.search` tool.
 
 ## OnionClaw darkweb integration
 
@@ -387,11 +357,6 @@ export ANTHROPIC_API_KEY="***"
 export GEMINI_API_KEY="***"
 export GOOGLE_API_KEY="***"
 
-export LLM_AUTH_MODE="api-key"
-export LLM_OAUTH_TOKEN_COMMAND=""
-export LLM_OAUTH_PROJECT=""
-export LLM_OAUTH_LOCATION=""
-
 export ARES_CONTEXT_MODE="compact"
 export ARES_CONTEXT_WINDOW="32768"
 export ARES_RESERVED_OUTPUT_TOKENS="4096"
@@ -406,12 +371,6 @@ export ROE_PROFILE="safe-active"
 export DEFAULT_MODE="safe-active"
 export ALLOW_PRIVATE_ONLY="true"
 export MAX_RISK="active"
-
-export ONIONCLAW_ENABLED="false"
-export ONIONCLAW_REPO_PATH="/opt/onionclaw"
-export ONIONCLAW_PYTHON_BIN="python3"
-export ONIONCLAW_ENV_PATH="$HOME/.ares/integrations/onionclaw/.env"
-export ONIONCLAW_DB_PATH="$HOME/.ares/integrations/onionclaw/sicry.db"
 ```
 
 Defaults remain conservative:
@@ -424,8 +383,6 @@ Defaults remain conservative:
 - raw tool excerpts excluded from context unless explicitly enabled
 
 ## Runtime architecture
-
-Ares runs through this control path:
 
 ```text
 operator prompt
@@ -441,31 +398,22 @@ operator prompt
   -> Markdown report, engagement memory, and optional training export
 ```
 
-Primary files:
+Operator surfaces sit beside that runtime:
 
-- `src/ares/run.py` builds config, policy, registry, model clients, router selection, context summaries, dispatcher, runtime, events, hooks, persistence, and reports
-- `src/ares/agent/dispatcher.py` is the central tool-call choke point and indexes useful tool results into memory chunks
-- `src/ares/agent/context_builder.py` builds compact or long model-facing session summaries
-- `src/ares/agent/context_config.py` parses `ARES_CONTEXT_*` settings
-- `src/ares/agent/context_budget.py` tracks section cost and trims sections to fit the prompt budget
-- `src/ares/agent/tool_result_indexer.py` compacts tool results and redacts secrets before memory storage
-- `src/ares/tools/evidence_memory.py` registers passive evidence recall tools
-- `src/ares/engagement_memory.py` stores and retrieves file-based run summaries as untrusted prior context
-- `src/ares/state/db.py` owns SQLite tables for sessions, tool calls, messages, hosts, services, and memory chunks
-- `src/ares/training/export.py` exports redacted JSONL examples from clean completed sessions
-- `src/ares/gateway.py` owns the HTTP gateway, browser UI routes, event polling, auth checks, pairing, and audit events
-- `src/ares/config/loader.py` resolves environment, persisted JSON config, provider profiles, gateway modes, hooks, OnionClaw settings, and agent routing config
+```text
+TUI       -> direct terminal operator client
+Dashboard -> browser operator client
+Gateway   -> HTTP API/control plane used by dashboard and external clients
+```
 
 ## Tests
-
-Run the project tests and a compile check:
 
 ```bash
 python -m pytest tests -q
 python -m compileall src/ares
 ```
 
-Targeted checks for the long-context, memory, and v1 schema paths:
+Targeted checks for long-context, memory, and schema paths:
 
 ```bash
 python -m pytest tests/test_context_config.py tests/test_context_builder_budget.py -q
@@ -473,10 +421,10 @@ python -m pytest tests/test_state_memory_chunks.py tests/test_state_schema_migra
 python -m pytest tests/test_evidence_memory_tools.py tests/test_training_export.py -q
 ```
 
-Targeted checks for gateway/auth, onboarding, model setup, OAuth, and provider adapter work:
+Targeted checks for gateway, dashboard, TUI, onboarding, model setup, OAuth, and provider adapter work:
 
 ```bash
-python -m pytest tests/test_gateway_access.py tests/test_gateway_v1_auth_matrix.py tests/test_gateway_web_ui.py -q
+python -m pytest tests/test_gateway_access.py tests/test_gateway_v1_auth_matrix.py tests/test_gateway_web_ui.py tests/test_dashboard_surface.py -q
 python -m pytest tests/test_prompt_ui.py -q
 python -m pytest tests/test_oauth_flows.py -q
 python -m pytest tests/test_onboard_cli.py tests/test_cli_model.py tests/test_model_config.py tests/test_llm_provider_adapters.py tests/test_cli_auth.py -q
