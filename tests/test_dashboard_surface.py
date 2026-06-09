@@ -13,7 +13,8 @@ class DashboardSurfaceTests(unittest.TestCase):
         css = build_dashboard_css()
         js = build_dashboard_js(auth_required=True)
 
-        self.assertIn("Ares Web UI", html)
+        self.assertIn("Ares Dashboard", html)
+        self.assertIn("Browser operator surface backed by the Ares gateway API/control plane.", html)
         self.assertIn('data-auth-required="true"', html)
         self.assertIn("/api/runs", js)
         self.assertIn("/api/events", js)
