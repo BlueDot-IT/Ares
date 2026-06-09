@@ -1,6 +1,6 @@
 <svg width="1280" height="420" viewBox="0 0 1280 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Ares autonomous pentesting runtime banner</title>
-  <desc id="desc">A dark technical banner for Ares showing model adapters, policy enforcement, tool registry, and evidence state.</desc>
+  <desc id="desc">A dark technical banner for Ares showing model adapters, policy enforcement, tool registry, evidence memory, and reports.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="420" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#070A12"/>
@@ -60,7 +60,7 @@
 
   <text x="466" y="106" fill="#F8FAFC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="68" font-weight="800" letter-spacing="2">ARES</text>
   <text x="468" y="150" fill="#CBD5E1" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="500">Operator-supervised security agent runtime</text>
-  <text x="468" y="184" fill="#94A3B8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Model adapters. Policy choke points. Tool registry. Evidence state.</text>
+  <text x="468" y="184" fill="#94A3B8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Long context. Evidence memory. Policy choke points. Reports.</text>
 
   <path d="M468 260H1112" stroke="url(#line)" stroke-width="3" stroke-linecap="round"/>
 
@@ -77,18 +77,18 @@
     </g>
     <g>
       <rect x="828" y="224" width="144" height="72" rx="18" fill="#111827" fill-opacity="0.9" stroke="#334155"/>
-      <text x="864" y="255">TOOLS</text>
-      <text x="858" y="278" fill="#94A3B8" font-size="13" font-weight="500">GhostMCP, OnionClaw</text>
+      <text x="864" y="255">MEMORY</text>
+      <text x="858" y="278" fill="#94A3B8" font-size="13" font-weight="500">SQLite FTS recall</text>
     </g>
     <g>
       <rect x="1008" y="224" width="144" height="72" rx="18" fill="#111827" fill-opacity="0.9" stroke="#334155"/>
       <text x="1039" y="255">STATE</text>
-      <text x="1039" y="278" fill="#94A3B8" font-size="13" font-weight="500">SQLite, reports</text>
+      <text x="1039" y="278" fill="#94A3B8" font-size="13" font-weight="500">Reports, training export</text>
     </g>
   </g>
 
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#94A3B8">
-    <text x="468" y="350">CLI | TUI | HTTP gateway | event stream | markdown reports</text>
+    <text x="468" y="350">CLI | TUI | HTTP gateway | event stream | memory chunks | markdown reports</text>
     <text x="468" y="376">Beta 0.1.0b0 - human-controlled engagements, not unattended exploitation</text>
   </g>
 </svg>

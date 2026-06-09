@@ -64,6 +64,10 @@ def run_model_setup(*, home: Path) -> ModelSetupResult:
         if confirm("Sign in now?", default=False):
             build_oauth_broker(home=home).login("gemini")
             oauth_sign_in_complete = True
+    elif auth_mode == "oauth" and selected.provider == "openai":
+        if confirm("Sign in now with ChatGPT?", default=False):
+            build_oauth_broker(home=home).login("openai")
+            oauth_sign_in_complete = True
 
     base_url = _resolve_base_url(selected, current=current)
     save_llm_config(
@@ -177,6 +181,11 @@ def format_onboarding_summary(*, home: Path, result: FullOnboardingResult) -> li
             lines.append("Use 'ares auth login --provider gemini' if you skipped sign-in or need to refresh cached Google credentials.")
         else:
             lines.append("Remember to install '.[gemini]' and export GEMINI_API_KEY.")
+    elif result.model_setup.profile_name == "openai":
+        if final_cfg.llm.auth_mode == "oauth":
+            lines.append("Use 'ares auth login --provider openai' if you skipped sign-in or need to refresh cached ChatGPT credentials.")
+        else:
+            lines.append("Remember to export OPENAI_API_KEY before running Ares.")
     return lines
 
 

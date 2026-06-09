@@ -19,12 +19,17 @@ class _FakeBroker:
         self.logout_calls: list[str] = []
 
     def describe(self, provider: str):
-        if provider == "gemini":
-            return {"provider": "gemini", "label": "Gemini", "method": "browser"}
-        return None
+        labels = {
+            "gemini": {"provider": "gemini", "label": "Gemini", "method": "browser"},
+            "openai": {"provider": "openai", "label": "OpenAI OAuth", "method": "browser"},
+        }
+        return labels.get(provider)
 
     def available_flows(self):
-        return [{"provider": "gemini", "label": "Gemini", "method": "browser"}]
+        return [
+            {"provider": "gemini", "label": "Gemini", "method": "browser"},
+            {"provider": "openai", "label": "OpenAI OAuth", "method": "browser"},
+        ]
 
     def login(self, provider: str):
         self.login_calls.append(provider)
@@ -65,7 +70,7 @@ class CliAuthTests(unittest.TestCase):
     def test_auth_login_without_provider_uses_supported_oauth_provider(self):
         broker = _FakeBroker()
         with patch("ares.cli.build_oauth_broker", return_value=broker):
-            result = self.runner.invoke(app, ["auth", "login"])
+            result = self.runner.invoke(app, ["auth", "login"], input="1\n")
 
         self.assertEqual(result.exit_code, 0, result.stdout)
         self.assertIn("Logged in: gemini", result.stdout)
@@ -125,6 +130,46 @@ class CliAuthTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.stdout)
         self.assertEqual(broker.login_calls, ["gemini"])
         self.assertIn("oauth sign-in: complete", result.stdout)
+
+    def test_auth_login_openai_provider(self):
+        broker = _FakeBroker()
+        broker.describe = lambda provider: {
+            "provider": provider,
+            "label": "OpenAI OAuth" if provider == "openai" else "Gemini",
+            "method": "browser",
+        }
+        with patch("ares.cli.build_oauth_broker", return_value=broker):
+            result = self.runner.invoke(app, ["auth", "login", "--provider", "openai"])
+
+        self.assertEqual(result.exit_code, 0, result.stdout)
+        self.assertIn("Logged in: openai", result.stdout)
+        self.assertEqual(broker.login_calls, ["openai"])
+
+    def test_auth_status_openai_provider(self):
+        broker = _FakeBroker()
+        broker.status = lambda provider=None: [
+            {
+                "provider": "openai",
+                "has_token": True,
+                "expires_at": "2030-01-01T00:00:00+00:00",
+                "method": "browser",
+            }
+        ]
+        with patch("ares.cli.build_oauth_broker", return_value=broker):
+            result = self.runner.invoke(app, ["auth", "status", "--provider", "openai"])
+
+        self.assertEqual(result.exit_code, 0, result.stdout)
+        self.assertIn("provider: openai", result.stdout)
+        self.assertIn("has_token: yes", result.stdout)
+
+    def test_auth_logout_openai_provider(self):
+        broker = _FakeBroker()
+        with patch("ares.cli.build_oauth_broker", return_value=broker):
+            result = self.runner.invoke(app, ["auth", "logout", "--provider", "openai"])
+
+        self.assertEqual(result.exit_code, 0, result.stdout)
+        self.assertIn("Logged out: openai", result.stdout)
+        self.assertEqual(broker.logout_calls, ["openai"])
 
 
 if __name__ == "__main__":

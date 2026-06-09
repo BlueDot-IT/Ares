@@ -10,7 +10,9 @@ from ares.agent.context_builder import ContextBuilder
 from ares.agent.dispatcher import ToolDispatcher
 from ares.agent.prompt_builder import PromptBuilder
 from ares.agent.runtime import AgentRuntime, ModelClient, RuntimeResult
+from ares.agent.tool_result_indexer import should_index_tool_result, tool_result_to_memory_text
 from ares.config.loader import AppConfig, DEFAULT_OPENAI_BASE_URL, config_file_path, infer_llm_profile, load_config, load_home_env
+from ares.engagement_memory import build_engagement_memory_context
 from ares.hooks import HookManager
 from ares.llm import AnthropicModel, GeminiModel, OpenAICompatModel, resolve_api_key, resolve_provider
 from ares.llm.failover import FailoverCandidate, FailoverModel
@@ -20,6 +22,7 @@ from ares.playbooks.registry import PlaybookRegistry
 from ares.reporting.markdown import render_session_report
 from ares.routing import AgentRouter, apply_agent_profile
 from ares.state.db import StateDB
+from ares.tools.evidence_memory import register_evidence_tools
 from ares.tools.ghostmcp_adapter import register_ghostmcp_tools
 from ares.tools.onionclaw_adapter import register_onionclaw_tools
 from ares.tools.registry import ToolRegistry
@@ -32,11 +35,13 @@ def build_policy(config: AppConfig) -> PolicyContext:
     )
 
 
-def build_registry(config: AppConfig | None = None) -> ToolRegistry:
+def build_registry(config: AppConfig | None = None, *, state_db: StateDB | None = None, session_id: int | None = None) -> ToolRegistry:
     config = config or load_config()
     registry = ToolRegistry()
     register_ghostmcp_tools(registry, policy_allow_private_only=config.policy.allow_private_only)
     register_onionclaw_tools(registry, config=config.onionclaw)
+    if state_db is not None:
+        register_evidence_tools(registry, state_db, session_id)
     return registry
 
 
@@ -326,7 +331,6 @@ def run_once(
     config = apply_agent_profile(config, resolution)
     if policy_allow_private_only is not None:
         config = replace(config, policy=replace(config.policy, allow_private_only=policy_allow_private_only))
-    registry = registry or build_registry(config)
     policy = build_policy(config)
     model = model or build_model(config)
     state_db = state_db or StateDB(config.home / "state.db")
@@ -341,6 +345,8 @@ def run_once(
         model=config.llm.model,
         mode=config.policy.default_mode,
     )
+
+    registry = registry or build_registry(config, state_db=state_db, session_id=session_id)
 
     def emit_event(payload: dict[str, Any]) -> None:
         event = dict(payload)
@@ -379,6 +385,7 @@ def run_once(
         session_id,
         target=target,
         memory_tags=resolution.profile.memory_tags,
+        query=prompt,
     )
     roe_profile = ROEProfileRegistry.builtin().get(config.policy.roe_profile)
     dispatcher = ToolDispatcher(

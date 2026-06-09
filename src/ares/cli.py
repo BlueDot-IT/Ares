@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -37,6 +38,9 @@ from ares.run import (
     write_session_report,
 )
 from ares.state.db import StateDB
+
+from ares.training.export import export_training_data
+
 from ares.tui import launch_tui
 
 app = typer.Typer(help=f"{APP_NAME} autonomous testing suite", invoke_without_command=True)
@@ -514,6 +518,20 @@ def gateway_pair(
             ]
         )
     )
+
+
+@app.command("training")
+def training(
+    out: str = typer.Option("data/ares-sft.jsonl", "--out", "-o", help="Output JSONL file path"),
+    min_status: str = typer.Option("final_response", "--min-status", help="Minimum session status to export"),
+) -> None:
+    """Export training data from completed sessions to JSONL format."""
+    cfg = load_config()
+    db = StateDB(cfg.home / "state.db")
+    output_path = Path(out)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    count = export_training_data(db, output_path, min_status=min_status)
+    typer.echo(f"Exported {count} training examples to {output_path}")
 
 
 @app.command("tui")
