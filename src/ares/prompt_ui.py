@@ -50,7 +50,7 @@ def ask_text(
     while True:
         suffix = f" [{default}]" if default else ""
         prompt_text = f"{prompt}{suffix}: "
-        if hide_input and input_fn is _default_input:
+        if hide_input and use_tty and input_fn is _default_input:
             raw = getpass.getpass(prompt_text)
         else:
             raw = input_fn(prompt_text)
