@@ -105,6 +105,59 @@ class StateDB:
                 )
                 """
             )
+            # memory_chunks table for long-context retrieval
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_chunks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER,
+                    source_type TEXT NOT NULL,
+                    source_id TEXT,
+                    target TEXT,
+                    tags_json TEXT NOT NULL DEFAULT '[]',
+                    content TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            # Try to create FTS5 virtual table; if unavailable, continue without it
+            try:
+                conn.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts
+                    USING fts5(content, target, tags, content='memory_chunks', content_rowid='id')
+                    """
+                )
+                # Triggers to keep FTS in sync
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS memory_chunks_ai AFTER INSERT ON memory_chunks BEGIN
+                        INSERT INTO memory_chunks_fts(rowid, content, target, tags)
+                        VALUES (new.id, new.content, coalesce(new.target, ''), coalesce(new.tags_json, '[]'));
+                    END;
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS memory_chunks_ad AFTER DELETE ON memory_chunks BEGIN
+                        INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, content, target, tags)
+                        VALUES ('delete', old.id, old.content, coalesce(old.target, ''), coalesce(old.tags_json, '[]'));
+                    END;
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS memory_chunks_au AFTER UPDATE ON memory_chunks BEGIN
+                        INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, content, target, tags)
+                        VALUES ('delete', old.id, old.content, coalesce(old.target, ''), coalesce(old.tags_json, '[]'));
+                        INSERT INTO memory_chunks_fts(rowid, content, target, tags)
+                        VALUES (new.id, new.content, coalesce(new.target, ''), coalesce(new.tags_json, '[]'));
+                    END;
+                    """
+                )
+            except sqlite3.OperationalError:
+                # FTS5 not available; search will fall back to LIKE
+                pass
 
     def create_session(
         self,
@@ -283,3 +336,106 @@ class StateDB:
                 (session_id, tool, args_json),
             ).fetchone()
             return row is not None
+
+    # Memory chunks methods
+    def add_memory_chunk(
+        self,
+        *,
+        session_id: int | None,
+        source_type: str,
+        source_id: str | None,
+        target: str | None,
+        tags: list[str] | tuple[str, ...],
+        content: str,
+    ) -> int:
+        with self._connection() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO memory_chunks (session_id, source_type, source_id, target, tags_json, content, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id if session_id is not None else None,
+                    source_type,
+                    source_id,
+                    target,
+                    json.dumps(list(tags), sort_keys=True),
+                    content,
+                    time.time(),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def search_memory_chunks(
+        self,
+        *,
+        query: str,
+        target: str | None = None,
+        tags: tuple[str, ...] = (),
+        limit: int = 6,
+    ) -> list[dict[str, Any]]:
+        normalized_tags = {t.lower() for t in tags if t}
+        results: list[dict[str, Any]] = []
+
+        with self._connection() as conn:
+            # Try FTS5 first
+            fts_available = True
+            try:
+                conn.execute("SELECT 1 FROM memory_chunks_fts LIMIT 1")
+            except sqlite3.OperationalError:
+                fts_available = False
+
+            if fts_available:
+                # Build FTS query
+                fts_query = query.strip()
+                if not fts_query:
+                    return []
+                sql = """
+                    SELECT mc.id, mc.session_id, mc.source_type, mc.source_id, mc.target,
+                           mc.tags_json, mc.content, mc.created_at
+                    FROM memory_chunks mc
+                    JOIN memory_chunks_fts fts ON mc.id = fts.rowid
+                    WHERE memory_chunks_fts MATCH ?
+                """
+                params: list[Any] = [fts_query]
+                if target:
+                    sql += " AND mc.target = ?"
+                    params.append(target)
+                sql += " ORDER BY mc.created_at DESC LIMIT ?"
+                params.append(limit)
+                rows = conn.execute(sql, params).fetchall()
+                for row in rows:
+                    chunk = dict(row)
+                    chunk["tags"] = json.loads(chunk.pop("tags_json"))
+                    if normalized_tags:
+                        chunk_tags = {t.lower() for t in chunk["tags"]}
+                        if not (chunk_tags & normalized_tags):
+                            continue
+                    results.append(chunk)
+                return results[:limit]
+
+            # Fallback: LIKE search
+            like_query = f"%{query.strip()}%"
+            sql = """
+                SELECT id, session_id, source_type, source_id, target, tags_json, content, created_at
+                FROM memory_chunks
+                WHERE content LIKE ?
+            """
+            params = [like_query]
+            if target:
+                sql += " AND target = ?"
+                params.append(target)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit * 3)  # fetch more to allow tag filtering
+            rows = conn.execute(sql, params).fetchall()
+            for row in rows:
+                chunk = dict(row)
+                chunk["tags"] = json.loads(chunk.pop("tags_json"))
+                if normalized_tags:
+                    chunk_tags = {t.lower() for t in chunk["tags"]}
+                    if not (chunk_tags & normalized_tags):
+                        continue
+                results.append(chunk)
+                if len(results) >= limit:
+                    break
+            return results[:limit]

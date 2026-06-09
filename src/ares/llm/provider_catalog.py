@@ -39,8 +39,9 @@ _PROVIDER_CHOICES: tuple[ProviderChoice, ...] = (
         default_model="gpt-4.1-mini",
         default_endpoint=DEFAULT_OPENAI_CLOUD_BASE_URL,
         endpoint_mode="hidden",
-        auth_methods=("api-key",),
-        hint="Uses OpenAI's hosted API with the standard cloud endpoint.",
+        auth_methods=("api-key", "oauth"),
+        hint="Uses OpenAI's hosted API with the standard cloud endpoint. Supports API key or ChatGPT OAuth.",
+        oauth_provider="openai",
     ),
     ProviderChoice(
         key="openrouter",

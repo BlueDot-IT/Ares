@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import hashlib
 import os
+import secrets
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Protocol
 
 from .oauth_cache import OAuthTokenCacheEntry, clear_oauth_token, list_oauth_tokens, load_oauth_token, normalize_oauth_provider_key, save_oauth_token
+
+OPENAI_OAUTH_AUTH_ENDPOINT = "https://auth.openai.com/authorize"
+OPENAI_OAUTH_TOKEN_ENDPOINT = "https://auth0.openai.com/oauth/token"
+OPENAI_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaX197iZdX"
+OPENAI_OAUTH_REDIRECT_URI = "http://localhost:1455/callback"
+OPENAI_OAUTH_SCOPES = ("openid", "profile", "offline_access")
 
 
 @dataclass(frozen=True)
@@ -176,5 +186,170 @@ class GoogleOAuthFlow:
         )
 
 
+class OpenAIOAuthFlow:
+    """OpenAI ChatGPT OAuth 2.0 PKCE flow against OpenAI's Auth0 tenant.
+
+    This implements the same browser-based login that Codex and ChatGPT use.
+    No client secret is required — the flow uses PKCE for public clients.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: str = "openai",
+        label: str = "OpenAI OAuth",
+        client_id: str = OPENAI_OAUTH_CLIENT_ID,
+        redirect_uri: str = OPENAI_OAUTH_REDIRECT_URI,
+        scopes: tuple[str, ...] = OPENAI_OAUTH_SCOPES,
+        auth_endpoint: str = OPENAI_OAUTH_AUTH_ENDPOINT,
+        token_endpoint: str = OPENAI_OAUTH_TOKEN_ENDPOINT,
+    ) -> None:
+        self.provider = provider
+        self.label = label
+        self.client_id = client_id
+        self.redirect_uri = redirect_uri
+        self.scopes = scopes
+        self.auth_endpoint = auth_endpoint
+        self.token_endpoint = token_endpoint
+
+    def describe(self) -> OAuthFlowInfo:
+        return OAuthFlowInfo(
+            provider=self.provider,
+            label=self.label,
+            login_label="Sign in with ChatGPT",
+            method="browser",
+        )
+
+    def login(self, *, home: Path, cached: OAuthTokenCacheEntry | None = None) -> OAuthTokenCacheEntry:
+        code_verifier = self._generate_code_verifier()
+        code_challenge = self._generate_code_challenge(code_verifier)
+        state = secrets.token_urlsafe(32)
+
+        auth_url = self._build_authorization_url(code_challenge, state)
+        print(f"\nOpening browser for OpenAI sign-in...\nIf it does not open, visit:\n{auth_url}\n")
+        self._open_browser(auth_url)
+
+        auth_code = self._receive_callback(state)
+        return self._exchange_code(auth_code, code_verifier)
+
+    @staticmethod
+    def _generate_code_verifier() -> str:
+        return secrets.token_urlsafe(64)
+
+    @classmethod
+    def _generate_code_challenge(cls, verifier: str) -> str:
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
+        import base64
+        return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+    def _build_authorization_url(self, code_challenge: str, state: str) -> str:
+        params = {
+            "client_id": self.client_id,
+            "response_type": "code",
+            "redirect_uri": self.redirect_uri,
+            "scope": " ".join(self.scopes),
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+        }
+        return f"{self.auth_endpoint}?{urllib.parse.urlencode(params)}"
+
+    @staticmethod
+    def _open_browser(url: str) -> None:
+        import webbrowser
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    def _receive_callback(self, expected_state: str) -> str:
+        parsed = urllib.parse.urlparse(self.redirect_uri)
+        port = parsed.port or 1455
+        received_state = None
+        received_code = None
+        received_error = None
+
+        class CallbackHandler(BaseHTTPRequestHandler):
+            def do_GET(handler_self):
+                nonlocal received_state, received_code, received_error
+                query = urllib.parse.parse_qs(urllib.parse.urlparse(handler_self.path).query)
+                received_state = query.get("state", [None])[0]
+                received_code = query.get("code", [None])[0]
+                received_error = query.get("error", [None])[0]
+                handler_self.send_response(200)
+                handler_self.send_header("Content-Type", "text/html")
+                handler_self.end_headers()
+                handler_self.wfile.write(
+                    b"<html><body><h2>OpenAI sign-in complete.</h2>"
+                    b"<p>You can close this tab and return to Ares.</p></body></html>"
+                )
+
+            def log_message(self, format, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", port), CallbackHandler)
+        server.timeout = 120
+
+        try:
+            while received_code is None and received_error is None:
+                server.handle_request()
+        finally:
+            server.server_close()
+
+        if received_error:
+            raise RuntimeError(f"OpenAI OAuth error: {received_error}")
+        if received_state != expected_state:
+            raise RuntimeError("OpenAI OAuth state mismatch — possible CSRF attack")
+        if not received_code:
+            raise RuntimeError("OpenAI OAuth callback did not include an authorization code")
+        return received_code
+
+    def _exchange_code(self, code: str, code_verifier: str) -> OAuthTokenCacheEntry:
+        import urllib.request
+
+        payload = urllib.parse.urlencode({
+            "grant_type": "authorization_code",
+            "client_id": self.client_id,
+            "code": code,
+            "redirect_uri": self.redirect_uri,
+            "code_verifier": code_verifier,
+        }).encode("utf-8")
+
+        request = urllib.request.Request(
+            self.token_endpoint,
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                body = response.read().decode("utf-8")
+        except Exception as exc:
+            raise RuntimeError(f"OpenAI OAuth token exchange failed: {exc}") from exc
+
+        import json as _json
+        try:
+            token_data = _json.loads(body)
+        except _json.JSONDecodeError as exc:
+            raise RuntimeError("OpenAI OAuth token endpoint returned invalid JSON") from exc
+
+        access_token = str(token_data.get("access_token", "")).strip()
+        if not access_token:
+            raise RuntimeError("OpenAI OAuth token response did not include access_token")
+
+        expires_in = token_data.get("expires_in", 3600)
+        ttl = max(int(expires_in), 60) if isinstance(expires_in, (int, float)) else 3600
+        refresh_token = str(token_data.get("refresh_token", "")).strip()
+
+        return OAuthTokenCacheEntry(
+            provider=self.provider,
+            access_token=access_token,
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl),
+            refresh_token=refresh_token,
+            metadata={"source": "openai-pkce"},
+        )
+
+
 def build_default_oauth_broker(*, home: Path | str) -> OAuthBroker:
-    return OAuthBroker(home=home, flows=[GoogleOAuthFlow()])
+    return OAuthBroker(home=home, flows=[GoogleOAuthFlow(), OpenAIOAuthFlow()])

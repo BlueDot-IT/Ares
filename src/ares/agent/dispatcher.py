@@ -5,6 +5,7 @@ import time
 from typing import Any, Callable
 
 from ares.agent.runtime import ToolCall, ToolResult
+from ares.agent.tool_result_indexer import should_index_tool_result, tool_result_to_memory_text
 from ares.policy.context import PolicyContext
 from ares.policy.route import RoutePolicy
 from ares.tools.registry import ToolRegistry
@@ -63,6 +64,7 @@ class ToolDispatcher:
                 duration_ms=self._duration_ms(started),
             )
             self._record(result, raw_result=raw_result)
+            self._index_memory(result, raw_result=raw_result)
             return result
         except Exception as exc:
             result = ToolResult(
@@ -73,6 +75,7 @@ class ToolDispatcher:
                 duration_ms=self._duration_ms(started),
             )
             self._record(result, raw_result=None)
+            self._index_memory(result, raw_result=None)
             return result
 
     def _dispatch_registry(self, call: ToolCall) -> Any:
@@ -98,6 +101,61 @@ class ToolDispatcher:
             error=result.error,
             duration_ms=result.duration_ms,
         )
+
+    def _index_memory(self, result: ToolResult, *, raw_result: Any) -> None:
+        """Index useful tool results into memory_chunks for long-context retrieval."""
+        if self.recorder is None or self.session_id is None:
+            return
+        if not hasattr(self.recorder, "add_memory_chunk"):
+            return
+        try:
+            if not should_index_tool_result(result.tool, result.status, raw_result):
+                return
+            # Determine target from args
+            target = self._target_from_args(result.args)
+            # Determine tags based on tool name and result
+            tags = self._infer_tags(result.tool, raw_result, result.status)
+            memory_text = tool_result_to_memory_text(
+                tool_name=result.tool,
+                status=result.status,
+                args=result.args,
+                result=raw_result if result.status == "ok" else result.result,
+                error=result.error,
+            )
+            self.recorder.add_memory_chunk(
+                session_id=self.session_id,
+                source_type="tool_call",
+                source_id=result.tool,
+                target=target,
+                tags=tags,
+                content=memory_text,
+            )
+        except Exception:
+            # Indexing must never interfere with tool execution
+            pass
+
+    def _infer_tags(self, tool_name: str, result: Any, status: str) -> list[str]:
+        tags = []
+        if status != "ok":
+            tags.append("error")
+        # Tool-specific tags
+        if any(kw in tool_name.lower() for kw in ("scan", "nmap", "masscan", "recon", "discover", "enumerate")):
+            tags.append("recon")
+        if any(kw in tool_name.lower() for kw in ("exploit", "poc", "cve", "vuln")):
+            tags.append("vuln")
+        if any(kw in tool_name.lower() for kw in ("post", "pivot", "lateral", "persist", "cred")):
+            tags.append("post-exploitation")
+        if any(kw in tool_name.lower() for kw in ("web", "http", "burp", "zap", "nikto", "dirb", "gobuster")):
+            tags.append("web")
+        if any(kw in tool_name.lower() for kw in ("ssh", "rdp", "smb", "winrm", "ldap", "kerberos")):
+            tags.append("auth")
+        # Content-based tags
+        if isinstance(result, dict):
+            if "vulnerabilities" in result or "findings" in result:
+                tags.append("finding")
+            if "targets" in result or "hosts" in result:
+                tags.append("target")
+        return tags
 
     def _is_duplicate_success(self, call: ToolCall) -> bool:
         if self.recorder is None or self.session_id is None:
