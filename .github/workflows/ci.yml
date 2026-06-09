@@ -25,7 +25,7 @@ jobs:
       - name: Install package and test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . -e vendor/ghostmcp -e '.[dev]' '.[anthropic]' '.[gemini]' '.[ghostmcp]'
+          python -m pip install -e '.[dev,anthropic,gemini,ghostmcp]' -e vendor/ghostmcp
 
       - name: Run tests
         run: python -m pytest tests -q
@@ -48,6 +48,7 @@ jobs:
 
       - name: Build wheel and sdist
         run: |
+          rm -rf dist build src/*.egg-info
           python -m pip install --upgrade pip build
           python -m build
 
@@ -56,7 +57,7 @@ jobs:
           python -m venv /tmp/ares-wheel-smoke
           . /tmp/ares-wheel-smoke/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install dist/*.whl
+          python -m pip install dist/ares-1.0.0-py3-none-any.whl
           ares --version
           ares doctor
           ares dashboard --help
