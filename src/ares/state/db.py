@@ -7,9 +7,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+STATE_SCHEMA_VERSION = 1
+
 
 class StateDB:
-    """Small SQLite persistence layer for runtime sessions and tool calls."""
+    """Small SQLite persistence layer for runtime sessions, evidence, and memory."""
 
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
@@ -32,132 +34,201 @@ class StateDB:
 
     def _init_schema(self) -> None:
         with self._connection() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at REAL NOT NULL,
-                    prompt TEXT NOT NULL,
-                    target TEXT,
-                    agent TEXT,
-                    model TEXT,
-                    mode TEXT,
-                    status TEXT NOT NULL DEFAULT 'running'
-                )
-                """
+            self._ensure_schema_meta(conn)
+            self._ensure_sessions_schema(conn)
+            self._ensure_tool_calls_schema(conn)
+            self._ensure_messages_schema(conn)
+            self._ensure_hosts_schema(conn)
+            self._ensure_services_schema(conn)
+            self._ensure_memory_schema(conn)
+            self._set_schema_version(conn, STATE_SCHEMA_VERSION)
+
+    def _ensure_schema_meta(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ares_schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             )
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
-            if "agent" not in columns:
-                conn.execute("ALTER TABLE sessions ADD COLUMN agent TEXT")
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS tool_calls (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id INTEGER NOT NULL,
-                    created_at REAL NOT NULL,
-                    tool TEXT NOT NULL,
-                    args_json TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    result_json TEXT,
-                    error TEXT,
-                    duration_ms INTEGER NOT NULL DEFAULT 0,
-                    FOREIGN KEY(session_id) REFERENCES sessions(id)
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id INTEGER NOT NULL,
-                    created_at REAL NOT NULL,
-                    role TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    message_json TEXT,
-                    FOREIGN KEY(session_id) REFERENCES sessions(id)
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS hosts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id INTEGER NOT NULL,
-                    address TEXT NOT NULL,
-                    hostname TEXT,
-                    UNIQUE(session_id, address),
-                    FOREIGN KEY(session_id) REFERENCES sessions(id)
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS services (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id INTEGER NOT NULL,
-                    host_address TEXT NOT NULL,
-                    port INTEGER NOT NULL,
-                    proto TEXT NOT NULL,
-                    service TEXT,
-                    product TEXT,
-                    UNIQUE(session_id, host_address, port, proto),
-                    FOREIGN KEY(session_id) REFERENCES sessions(id)
-                )
-                """
-            )
-            # memory_chunks table for long-context retrieval
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS memory_chunks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id INTEGER,
-                    source_type TEXT NOT NULL,
-                    source_id TEXT,
-                    target TEXT,
-                    tags_json TEXT NOT NULL DEFAULT '[]',
-                    content TEXT NOT NULL,
-                    created_at REAL NOT NULL
-                )
-                """
-            )
-            # Try to create FTS5 virtual table; if unavailable, continue without it
+            """
+        )
+
+    def _set_schema_version(self, conn: sqlite3.Connection, version: int) -> None:
+        conn.execute(
+            """
+            INSERT INTO ares_schema_meta (key, value)
+            VALUES ('schema_version', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (str(int(version)),),
+        )
+
+    def schema_version(self) -> int:
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM ares_schema_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            if row is None:
+                return 0
             try:
-                conn.execute(
-                    """
-                    CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts
-                    USING fts5(content, target, tags, content='memory_chunks', content_rowid='id')
-                    """
-                )
-                # Triggers to keep FTS in sync
-                conn.execute(
-                    """
-                    CREATE TRIGGER IF NOT EXISTS memory_chunks_ai AFTER INSERT ON memory_chunks BEGIN
-                        INSERT INTO memory_chunks_fts(rowid, content, target, tags)
-                        VALUES (new.id, new.content, coalesce(new.target, ''), coalesce(new.tags_json, '[]'));
-                    END;
-                    """
-                )
-                conn.execute(
-                    """
-                    CREATE TRIGGER IF NOT EXISTS memory_chunks_ad AFTER DELETE ON memory_chunks BEGIN
-                        INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, content, target, tags)
-                        VALUES ('delete', old.id, old.content, coalesce(old.target, ''), coalesce(old.tags_json, '[]'));
-                    END;
-                    """
-                )
-                conn.execute(
-                    """
-                    CREATE TRIGGER IF NOT EXISTS memory_chunks_au AFTER UPDATE ON memory_chunks BEGIN
-                        INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, content, target, tags)
-                        VALUES ('delete', old.id, old.content, coalesce(old.target, ''), coalesce(old.tags_json, '[]'));
-                        INSERT INTO memory_chunks_fts(rowid, content, target, tags)
-                        VALUES (new.id, new.content, coalesce(new.target, ''), coalesce(new.tags_json, '[]'));
-                    END;
-                    """
-                )
-            except sqlite3.OperationalError:
-                # FTS5 not available; search will fall back to LIKE
-                pass
+                return int(row["value"])
+            except (TypeError, ValueError):
+                return 0
+
+    def _columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
+        return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, name: str, ddl: str) -> None:
+        if name not in self._columns(conn, table):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+    def _ensure_sessions_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at REAL NOT NULL,
+                prompt TEXT NOT NULL,
+                target TEXT,
+                agent TEXT,
+                model TEXT,
+                mode TEXT,
+                status TEXT NOT NULL DEFAULT 'running'
+            )
+            """
+        )
+        self._ensure_column(conn, "sessions", "target", "TEXT")
+        self._ensure_column(conn, "sessions", "agent", "TEXT")
+        self._ensure_column(conn, "sessions", "model", "TEXT")
+        self._ensure_column(conn, "sessions", "mode", "TEXT")
+        self._ensure_column(conn, "sessions", "status", "TEXT NOT NULL DEFAULT 'running'")
+
+    def _ensure_tool_calls_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tool_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                tool TEXT NOT NULL,
+                args_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result_json TEXT,
+                error TEXT,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(session_id) REFERENCES sessions(id)
+            )
+            """
+        )
+        self._ensure_column(conn, "tool_calls", "duration_ms", "INTEGER NOT NULL DEFAULT 0")
+
+    def _ensure_messages_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                message_json TEXT,
+                FOREIGN KEY(session_id) REFERENCES sessions(id)
+            )
+            """
+        )
+        self._ensure_column(conn, "messages", "message_json", "TEXT")
+
+    def _ensure_hosts_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hosts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                address TEXT NOT NULL,
+                hostname TEXT,
+                UNIQUE(session_id, address),
+                FOREIGN KEY(session_id) REFERENCES sessions(id)
+            )
+            """
+        )
+
+    def _ensure_services_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS services (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                host_address TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                proto TEXT NOT NULL,
+                service TEXT,
+                product TEXT,
+                UNIQUE(session_id, host_address, port, proto),
+                FOREIGN KEY(session_id) REFERENCES sessions(id)
+            )
+            """
+        )
+
+    def _ensure_memory_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER,
+                source_type TEXT NOT NULL,
+                source_id TEXT,
+                target TEXT,
+                tags_json TEXT NOT NULL DEFAULT '[]',
+                content TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_chunks_target_created ON memory_chunks(target, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_chunks_session_created ON memory_chunks(session_id, created_at DESC)"
+        )
+        try:
+            conn.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts
+                USING fts5(content, target, tags, content='memory_chunks', content_rowid='id')
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS memory_chunks_ai AFTER INSERT ON memory_chunks BEGIN
+                    INSERT INTO memory_chunks_fts(rowid, content, target, tags)
+                    VALUES (new.id, new.content, coalesce(new.target, ''), coalesce(new.tags_json, '[]'));
+                END;
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS memory_chunks_ad AFTER DELETE ON memory_chunks BEGIN
+                    INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, content, target, tags)
+                    VALUES ('delete', old.id, old.content, coalesce(old.target, ''), coalesce(old.tags_json, '[]'));
+                END;
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS memory_chunks_au AFTER UPDATE ON memory_chunks BEGIN
+                    INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, content, target, tags)
+                    VALUES ('delete', old.id, old.content, coalesce(old.target, ''), coalesce(old.tags_json, '[]'));
+                    INSERT INTO memory_chunks_fts(rowid, content, target, tags)
+                    VALUES (new.id, new.content, coalesce(new.target, ''), coalesce(new.tags_json, '[]'));
+                END;
+                """
+            )
+            self._rebuild_memory_fts(conn)
+        except sqlite3.OperationalError:
+            pass
+
+    def _rebuild_memory_fts(self, conn: sqlite3.Connection) -> None:
+        conn.execute("INSERT INTO memory_chunks_fts(memory_chunks_fts) VALUES ('rebuild')")
 
     def create_session(
         self,
@@ -337,7 +408,6 @@ class StateDB:
             ).fetchone()
             return row is not None
 
-    # Memory chunks methods
     def add_memory_chunk(
         self,
         *,
@@ -378,7 +448,6 @@ class StateDB:
         results: list[dict[str, Any]] = []
 
         with self._connection() as conn:
-            # Try FTS5 first
             fts_available = True
             try:
                 conn.execute("SELECT 1 FROM memory_chunks_fts LIMIT 1")
@@ -386,7 +455,6 @@ class StateDB:
                 fts_available = False
 
             if fts_available:
-                # Build FTS query
                 fts_query = query.strip()
                 if not fts_query:
                     return []
@@ -414,7 +482,6 @@ class StateDB:
                     results.append(chunk)
                 return results[:limit]
 
-            # Fallback: LIKE search
             like_query = f"%{query.strip()}%"
             sql = """
                 SELECT id, session_id, source_type, source_id, target, tags_json, content, created_at
@@ -426,7 +493,7 @@ class StateDB:
                 sql += " AND target = ?"
                 params.append(target)
             sql += " ORDER BY created_at DESC LIMIT ?"
-            params.append(limit * 3)  # fetch more to allow tag filtering
+            params.append(limit * 3)
             rows = conn.execute(sql, params).fetchall()
             for row in rows:
                 chunk = dict(row)
