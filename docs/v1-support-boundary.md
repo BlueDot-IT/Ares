@@ -20,8 +20,11 @@ The supported v1 operator commands are:
 - `ares theme`
 - `ares gateway-config`
 - `ares gateway`
+- `ares dashboard`
 - `ares gateway-pair`
 - `ares tui`
+- `ares-dashboard`
+- `ares-tui`
 
 The supported v1 runtime surface is:
 
@@ -32,10 +35,20 @@ The supported v1 runtime surface is:
 - SQLite state persistence in `src/ares/state/`
 - report rendering in `src/ares/reporting/`
 - central tool registry plus GhostMCP, OnionClaw, and evidence-memory adapters in `src/ares/tools/`
-- lightweight gateway and browser UI in `src/ares/gateway.py`, `src/ares/gateway_auth.py`, and `src/ares/webui.py`
+- gateway API/control-plane behavior in `src/ares/gateway.py` and `src/ares/gateway_auth.py`
+- browser dashboard behavior in `src/ares/dashboard.py` and compatibility asset builders in `src/ares/webui.py`
+- terminal operator UI behavior in `src/ares/tui.py`
 - redacted training-data export in `src/ares/training/export.py`
 - editable install and built-wheel install paths documented in `README.md`
 - the main test suite in `tests/` plus the vendored GhostMCP tree when installed editable from `vendor/ghostmcp`
+
+## Operator surface separation
+
+Ares v1 uses three distinct operator surfaces:
+
+- `gateway`: backend API/control plane for auth, pairing, allowlists, run submission, run status, event polling, and audit logging.
+- `dashboard`: browser frontend backed by the gateway API. It may be served by the gateway process, but the dashboard owns the browser UI assets and browser-facing launcher.
+- `tui`: terminal frontend for interactive operator work. It is separate from the browser dashboard.
 
 ## Stable behavior expectations
 
