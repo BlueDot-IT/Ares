@@ -22,7 +22,7 @@ class GatewayWebUiTests(unittest.TestCase):
         )
         return urllib.request.urlopen(request, timeout=2)
 
-    def test_http_gateway_serves_web_ui_shell_and_assets(self):
+    def test_http_gateway_serves_dashboard_shell_and_assets(self):
         from ares.gateway import AresGateway, start_gateway_server
 
         def fake_runner(**kwargs):
@@ -39,6 +39,8 @@ class GatewayWebUiTests(unittest.TestCase):
                 base = f"http://127.0.0.1:{server.server_address[1]}"
                 index = urllib.request.urlopen(base + "/", timeout=2)
                 html = index.read().decode("utf-8")
+                dashboard = urllib.request.urlopen(base + "/dashboard", timeout=2)
+                dashboard_html = dashboard.read().decode("utf-8")
                 app_js = urllib.request.urlopen(base + "/app.js", timeout=2)
                 js = app_js.read().decode("utf-8")
                 app_css = urllib.request.urlopen(base + "/app.css", timeout=2)
@@ -49,9 +51,11 @@ class GatewayWebUiTests(unittest.TestCase):
                 thread.join(timeout=2)
 
         self.assertEqual(index.headers.get_content_type(), "text/html")
+        self.assertEqual(dashboard.headers.get_content_type(), "text/html")
         self.assertEqual(app_js.headers.get_content_type(), "application/javascript")
         self.assertEqual(app_css.headers.get_content_type(), "text/css")
-        self.assertIn("<title>Ares Web UI</title>", html)
+        self.assertIn("<title>Ares Dashboard</title>", html)
+        self.assertIn("<title>Ares Dashboard</title>", dashboard_html)
         self.assertIn('<body data-theme="ember">', html)
         self.assertIn('id="run-form"', html)
         self.assertIn('id="runs-panel"', html)
@@ -64,7 +68,7 @@ class GatewayWebUiTests(unittest.TestCase):
         self.assertIn("background: #160d09", css)
         self.assertIn(".panel", css)
 
-    def test_web_ui_shell_preserves_existing_run_submission_api(self):
+    def test_dashboard_shell_preserves_existing_run_submission_api(self):
         from ares.gateway import AresGateway, start_gateway_server
 
         def fake_runner(**kwargs):
@@ -107,7 +111,7 @@ class GatewayWebUiTests(unittest.TestCase):
         self.assertTrue(any(event["type"] == "tool_call" for event in events["events"]))
         self.assertTrue(any(event["type"] == "session_finished" for event in events["events"]))
 
-    def test_exposed_auth_mode_serves_login_ready_ui_and_allows_bearer_bootstrap(self):
+    def test_exposed_auth_mode_serves_login_ready_dashboard_and_allows_bearer_bootstrap(self):
         from ares.config.loader import AppConfig, GatewayConfig, LLMConfig, PolicyConfig
         from ares.gateway import AresGateway, start_gateway_server
 
