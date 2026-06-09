@@ -20,6 +20,7 @@ from ares.config.loader import (
     save_llm_config,
     save_ui_config,
 )
+from ares.dashboard import format_dashboard_snapshot, launch_dashboard
 from ares.engagement_memory import list_engagement_memories
 from ares.gateway import AresGateway, start_gateway_server
 from ares.llm.oauth import build_oauth_broker
@@ -38,9 +39,7 @@ from ares.run import (
     write_session_report,
 )
 from ares.state.db import StateDB
-
 from ares.training.export import export_training_data
-
 from ares.tui import launch_tui
 
 app = typer.Typer(help=f"{APP_NAME} autonomous testing suite", invoke_without_command=True)
@@ -474,11 +473,11 @@ def run(
 
 @app.command("gateway")
 def gateway(
-    host: str | None = typer.Option(None, "--host", help="HTTP bind address for the control plane."),
-    port: int | None = typer.Option(None, "--port", help="HTTP bind port for the control plane."),
+    host: str | None = typer.Option(None, "--host", help="HTTP bind address for the API control plane."),
+    port: int | None = typer.Option(None, "--port", help="HTTP bind port for the API control plane."),
     mode: str | None = typer.Option(None, "--mode", help="Bind preset: loopback, lan, or exposed."),
 ) -> None:
-    """Run the lightweight HTTP gateway/control plane."""
+    """Run the lightweight HTTP gateway/API control plane."""
     cfg = load_config()
     bind_mode = resolve_gateway_mode(mode or cfg.gateway.mode)
     bind_defaults = gateway_mode_defaults(bind_mode)
@@ -491,6 +490,22 @@ def gateway(
         server.serve_forever()
     finally:
         server.server_close()
+
+
+@app.command("dashboard")
+def dashboard(
+    host: str | None = typer.Option(None, "--host", help="HTTP bind address for the gateway used by the dashboard."),
+    port: int | None = typer.Option(None, "--port", help="HTTP bind port for the gateway used by the dashboard."),
+    mode: str | None = typer.Option(None, "--mode", help="Gateway bind preset: loopback, lan, or exposed."),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open the dashboard URL in the default browser."),
+) -> None:
+    """Launch the browser dashboard backed by the gateway API."""
+    launch = launch_dashboard(host=host, port=port, mode=mode, open_browser=open_browser)
+    typer.echo(format_dashboard_snapshot(launch))
+    try:
+        launch.server.serve_forever()
+    finally:
+        launch.server.server_close()
 
 
 @app.command("gateway-pair")
