@@ -8,6 +8,7 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Add CI to run install smoke checks, `pytest`, and `compileall`.
 - [x] Add CI to build wheel and sdist artifacts.
 - [x] Add CI smoke checks against the built wheel.
+- [x] Add tag-triggered release artifact workflow.
 - [x] Bump package metadata and runtime version to `1.0.0`.
 - [x] Add the `ares-dashboard` console script beside `ares` and `ares-tui`.
 
@@ -45,6 +46,8 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Update long-context docs so the training command matches the CLI.
 - [x] Keep README release language aligned with package metadata.
 - [x] Document the gateway/dashboard/TUI separation.
+- [x] Add `CHANGELOG.md`.
+- [x] Add `docs/releases/v1.0.0.md` release notes.
 
 ## Phase 6: Legacy removal
 
@@ -80,3 +83,14 @@ ares-dashboard --help
 ares route --target 127.0.0.1 --prompt "safe local smoke test"
 ares training --out /tmp/ares-sft-smoke.jsonl --min-status final_response
 ```
+
+## Tag command
+
+After the final local gate passes:
+
+```bash
+git tag -a v1.0.0 -m "Ares v1.0.0"
+git push origin v1.0.0
+```
+
+The tag push triggers `.github/workflows/release.yml` to build and upload release artifacts.
