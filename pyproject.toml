@@ -4,16 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ares"
-version = "0.1.0b0"
-description = "Ares autonomous penetration testing suite for authorized engagements"
+version = "1.0.0"
+description = "Ares autonomous security testing suite for authorized engagements"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{name = "Jason O'Neal"}]
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["security", "pentest", "ai-agent", "autonomous-testing", "ghostmcp"]
+keywords = ["security", "authorized-testing", "ai-agent", "assessment-runtime", "ghostmcp"]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Information Technology",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
@@ -32,13 +32,13 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jason-allen-oneal/ares"
-Repository = "https://github.com/jason-allen-oneal/ares"
-Issues = "https://github.com/jason-allen-oneal/ares/issues"
+Homepage = "https://github.com/jason-allen-oneal/Ares"
+Repository = "https://github.com/jason-allen-oneal/Ares"
+Issues = "https://github.com/jason-allen-oneal/Ares/issues"
 
 [project.optional-dependencies]
 anthropic = ["anthropic"]
-gemini = ["google-genai"]
+gemini = ["google-auth", "google-auth-oauthlib", "google-genai"]
 ghostmcp = ["ghostmcp-server", "mcp"]
 dev = ["pytest", "build"]
 
