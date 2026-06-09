@@ -78,7 +78,7 @@ python -m pip install -e '.[ghostmcp]'
 For full local test coverage with the vendored GhostMCP tree:
 
 ```bash
-python -m pip install -e . -e vendor/ghostmcp -e '.[dev]'
+python -m pip install -e '.[dev,ghostmcp]' -e vendor/ghostmcp
 ```
 
 ## First run
