@@ -1,59 +1,59 @@
+<p align="center">
+  <img src="assets/ares-readme-banner.svg" alt="Ares - operator-supervised security agent runtime" width="100%">
+</p>
+
 # Ares
 
-Ares is an autonomous pentesting runtime for authorized engagements that combines Hermes-style agent execution with OpenClaw-style operator control.
+Ares is a beta security agent runtime for authorized engagements. It combines Hermes-style agent execution with OpenClaw-style operator control: a model can reason and request tools, but Ares keeps scope, risk, approval, routing, persistence, and reporting outside the model.
 
-Concretely, the current system already includes:
+Release status: `0.1.0b0`. Treat this as an operator-supervised beta, not an unattended production pentest system.
 
-- multi-provider agent execution with native Anthropic and Gemini adapters plus OpenAI-compatible endpoints under one shared runtime
-- a central ToolRegistry and GhostMCP integration layer so tools are exposed through one model-facing contract instead of provider-specific glue
-- dispatcher-owned policy enforcement for scope, ROE, risk, approval gates, duplicate suppression, timeouts, and route selection outside the model
-- operator-facing control surfaces including a Typer CLI, Hermes-style prompt_toolkit/Rich TUI, lightweight HTTP gateway, event stream, session persistence, and report generation
-- pentest-specific state handling for hosts, services, tool calls, evidence normalization, and Markdown reporting
+Authorized testing only. Do not use Ares against systems you do not own or do not have explicit permission to test.
 
-That is the intended shape of Ares: the best operational ideas from Hermes and OpenClaw, narrowed onto authorized pentesting rather than general-purpose agent work.
+## Current state
 
-Release status: `0.1.0b0` with intended git tag `v0.1.0-beta`. This line is suitable for operator-supervised authorized testing, reproducible packaged builds, and small-team dogfooding. It is a beta operator platform, not an unattended production pentest system.
+The current runtime includes:
 
-Repository layout:
-
-- `src/ares` - primary package, runtime core, CLI, and TUI
-- `src/lib` - supporting MCP and bridge entrypoints
-
-The runtime now lives directly under the `ares` package.
-
-Authorized testing only. Do not use this against systems you do not own or do not have explicit permission to test.
-
-## Current capabilities
-
-Implemented and wired into the current runtime:
-
-- OpenAI-compatible model adapter for LM Studio, llama.cpp server, vLLM, Ollama-compatible endpoints, OpenRouter, and OpenAI-style APIs
-- Native Anthropic adapter with tool-use translation into the runtime's shared tool-call format
-- Native Gemini adapter with function-calling translation into the runtime's shared tool-call format
-- Central `ToolRegistry` with model-facing schemas, availability checks, risk levels, and toolset metadata
-- GhostMCP adapter with fallback runner support
-- Bounded OnionClaw integration with an Ares-owned MCP runner, darkweb agent profile, and a curated Tor-routed tool subset for search, fetch, offline analysis, and export
-- Dispatcher-enforced scope, risk, approval, duplicate-suppression, timeout, and route policy outside the model
-- ROE profiles:
-  - `passive`
-  - `safe-active`
-  - `intrusive`
-  - `exploit-validate`
+- multi-provider model execution through OpenAI-compatible endpoints plus native Anthropic and Gemini adapters
+- model fallback chains so a primary model can fail over to configured alternates
+- a central `ToolRegistry` with model-facing schemas, availability checks, risk levels, and toolset metadata
+- dispatcher-owned enforcement for scope, ROE, risk, approval gates, duplicate suppression, target route policy, and optional tool timeouts
+- GhostMCP integration and a bounded OnionClaw integration for Tor-routed search, fetch, offline analysis, keyword extraction, and export helpers
 - SQLite persistence for sessions, messages, tool calls, hosts, and services
-- Normalized Nmap evidence parsing into hosts and services
-- Markdown report rendering from the StateDB
-- Lightweight HTTP gateway for background runs, run status, event streaming, web operator views, exposed-mode auth, pairing codes, CIDR allowlists, and JSONL audit events
-- Python hook loading for session automation, auto-report generation, built-in lifecycle hooks, and engagement-memory capture
-- Multi-agent routing with agent profiles, route selection, prompt prefixes, memory tags, route preview, and per-agent tool visibility
-- Guided onboarding for provider selection, auth mode, theme, gateway exposure, and hook defaults
-- Cached OAuth helpers for supported model providers, currently Gemini/Google OAuth
-- Hermes-style prompt_toolkit/Rich TUI with chat-first transcript, slash commands, theme colors, transcript scrollback, `/scope` public/private target toggling, and curses fallback when prompt_toolkit is unavailable
+- normalized Nmap evidence parsing and Markdown report generation
+- agent profiles with provider/model overrides, enabled and disabled toolsets, prompt prefixes, memory tags, and route matching
+- engagement memory captured from completed runs and fed back as untrusted historical context
+- operator surfaces through a Typer CLI, a prompt_toolkit/Rich TUI, and a lightweight HTTP gateway with browser UI, event polling, bearer auth, pairing codes, CIDR allowlists, and JSONL audit events
+- guided onboarding for model setup, theme, gateway exposure, hooks, and Gemini OAuth credential caching
+
+The less formal version: Ares is the useful parts of Hermes and OpenClaw narrowed onto authorized security work, with fewer loose wires hanging out.
+
+## Repository layout
+
+```text
+src/ares/
+  agent/       prompt building, context summaries, dispatcher, runtime loop
+  config/      environment and persisted JSON config loading
+  evidence/    parsers that normalize tool output into reusable findings
+  llm/         OpenAI-compatible, Anthropic, Gemini, and failover model clients
+  policy/      scope, risk, ROE, and target route controls
+  reporting/   Markdown report rendering
+  state/       SQLite persistence for sessions, messages, tools, hosts, services
+  tools/       central registry plus GhostMCP and OnionClaw adapters
+  cli.py       primary Typer command surface
+  gateway.py   lightweight HTTP control plane and browser UI server
+  run.py       high-level runtime wiring
+src/lib/       supporting MCP and bridge entrypoints
+vendor/        vendored GhostMCP tree when installed for local testing
+```
+
+The supported v1 boundary is tracked in `docs/v1-support-boundary.md`.
 
 ## Install
 
 ```bash
-git clone https://github.com/jason-allen-oneal/ares.git
-cd ares
+git clone https://github.com/jason-allen-oneal/Ares.git
+cd Ares
 git submodule update --init --recursive
 
 python -m venv .venv
@@ -70,60 +70,42 @@ python -m pip install -e '.[gemini]'
 python -m pip install -e '.[ghostmcp]'
 ```
 
-## OnionClaw darkweb integration
-
-Ares treats OnionClaw as an external bounded integration rather than importing the full standalone workflow surface into the main agent.
-
-Current default darkweb profile behavior when OnionClaw is enabled:
-
-- registers only the bounded Ares-facing subset: Tor checks, engine checks, search, fetch, offline analysis, keyword extraction, and export helpers
-- routes `.onion` targets and darkweb/hidden-service prompts into the `darkweb` agent profile
-- keeps exploit, watch, crawl, and broad autonomous LLM ask flows out of the default integration surface
-- stores integration-owned paths under `~/.ares/integrations/onionclaw/` unless overridden
-
-Example setup:
+For full local test coverage with the vendored GhostMCP tree:
 
 ```bash
-git clone https://github.com/christinminor459/OnionClaw.git /opt/onionclaw
-export ONIONCLAW_ENABLED=true
-export ONIONCLAW_REPO_PATH=/opt/onionclaw
-# optional
-export ONIONCLAW_PYTHON_BIN=/usr/bin/python3
-export ONIONCLAW_ENV_PATH="$HOME/.ares/integrations/onionclaw/.env"
-export ONIONCLAW_DB_PATH="$HOME/.ares/integrations/onionclaw/sicry.db"
+python -m pip install -e . -e vendor/ghostmcp -e '.[dev]'
 ```
 
-## CLI
+## First run
 
-Primary commands:
+Run the guided setup:
 
 ```bash
-ares --version
-ares doctor
-ares tools
-ares sessions
 ares onboard
-ares gateway
-ares gateway-pair
-ares tui
 ```
 
-Run a safe-active task against an authorized local target:
+For model-only setup:
 
 ```bash
-export OPENAI_BASE_URL="http://127.0.0.1:1234/v1"
-export LLM_MODEL="local-model"
+ares model --interactive
+```
 
+A local OpenAI-compatible server is the simplest test path:
+
+```bash
+export LLM_PROVIDER="local"
+export LLM_MODEL="local-model"
+export OPENAI_BASE_URL="http://127.0.0.1:1234/v1"
+export OPENAI_API_KEY="lm-studio"
+```
+
+Then run a private or loopback target first:
+
+```bash
 ares run \
   --target 127.0.0.1 \
   --prompt "Enumerate the target and stop after useful initial findings." \
   --max-iterations 20
-```
-
-Render a stored report:
-
-```bash
-ares report <session-id>
 ```
 
 Dangerous actions are denied by default. Inside an explicit authorized ROE, use:
@@ -134,61 +116,77 @@ ares run --target 127.0.0.1 --approve-dangerous --prompt "..."
 
 `--approve-dangerous` only satisfies dispatcher approval gates. Scope and risk policy still run before execution.
 
-## Onboarding and provider setup
-
-Run the guided first-run setup when you want Ares to persist model, theme, gateway, and hook defaults without hand-editing config:
+## Command surface
 
 ```bash
-ares onboard
-```
-
-The onboarding flow uses a menu in a real terminal and numbered choices in scripted/non-TTY runs. It writes to `~/.ares/config.json` by default, or to `$APP_HOME/config.json` when `APP_HOME` is set.
-
-For model-only setup, use the shared model wizard:
-
-```bash
+ares --version
+ares doctor
+ares model
 ares model --interactive
+ares model --fallback openrouter/openai/gpt-4o-mini
+ares route --target 127.0.0.1 --prompt "Initial safe enumeration"
+ares tools
+ares sessions
+ares memory
+ares report <session-id>
+ares theme <name>
+ares onboard
+ares gateway-config
+ares gateway
+ares gateway-pair
+ares tui
 ```
 
-The current provider choices are:
+The CLI entrypoint is `ares`. A secondary script, `ares-tui`, launches the TUI directly.
 
-- `local` - OpenAI-compatible local server, defaulting to `http://127.0.0.1:1234/v1`, with the endpoint editable
-- `openai` - OpenAI cloud, defaulting to `gpt-4.1-mini` and `https://api.openai.com/v1`, with the endpoint hidden in normal setup
-- `openrouter` - OpenRouter cloud, defaulting to `openai/gpt-4o-mini` and `https://openrouter.ai/api/v1`, with the endpoint hidden in normal setup
-- `anthropic` - native Anthropic adapter, no OpenAI-compatible endpoint prompt
-- `gemini` - native Gemini adapter, no OpenAI-compatible endpoint prompt, supports API key or OAuth
-- `custom` - operator-provided OpenAI-compatible endpoint and model
+## Model providers
 
-Only Gemini currently has a built-in OAuth broker. OpenAI, OpenRouter, Anthropic, local, and custom OpenAI-compatible profiles remain API-key based unless a real provider-specific OAuth broker is added.
+Ares supports these provider families:
 
-Manage cached OAuth credentials with:
+- `local`, `lm-studio`, `ollama`, `vllm`, `llama-cpp`, `openai-compatible`, and `custom` through the shared OpenAI-compatible adapter
+- `openai` through the OpenAI-compatible cloud path
+- `openrouter` through the OpenAI-compatible OpenRouter endpoint
+- `anthropic` through the native Anthropic adapter
+- `gemini` through the native Gemini adapter
+
+Provider config can come from shell environment, `~/.ares/.env`, or persisted `~/.ares/config.json`. Existing shell environment values win over `~/.ares/.env`.
+
+Example model config:
+
+```bash
+ares model --provider local --model local-model --base-url http://127.0.0.1:1234/v1
+ares model --fallback openrouter/openai/gpt-4o-mini
+ares model --fallback anthropic/claude-3-5-haiku-latest
+ares model
+```
+
+Gemini is the only provider with a built-in OAuth broker in current main:
 
 ```bash
 ares auth login --provider gemini
 ares auth status
-ares auth status --provider gemini
 ares auth logout --provider gemini
 ```
 
-Gemini OAuth caches token metadata under `~/.ares/oauth/`. It uses an installed-app browser flow when `GOOGLE_OAUTH_CLIENT_SECRETS` points to a Google client secrets file. Otherwise it falls back to Google application default credentials.
+OpenAI, OpenRouter, Anthropic, local, and custom OpenAI-compatible profiles remain API-key based unless a provider-specific OAuth broker is added.
 
 ## TUI
 
-Launch the terminal UI:
+Launch the operator shell:
 
 ```bash
 ares tui
 ```
 
-The TUI is the primary operator shell. It now uses a Hermes-style `prompt_toolkit` input loop with Rich/prompt_toolkit styling and keeps the original curses loop only as an import-time fallback. The full ASCII Ares banner is preserved; the live transcript is chat-first and uses compact top chrome so tool calls, tool results, and model responses remain visible.
+The TUI uses a Hermes-style `prompt_toolkit` input loop with Rich styling and keeps the original curses loop as an import-time fallback. It is chat-first, keeps compact top chrome, and preserves the Ares ASCII banner.
 
-Inside the TUI, type normal instructions to launch a run, or use slash commands:
+Useful slash commands:
 
 ```text
 /commands          show the full command list
 /target <target>   set the default authorized target
 /scope public      allow authorized public targets in this TUI process
-/scope private     return to private/loopback target scope only
+/scope private     return to private or loopback target scope only
 /yolo              toggle dangerous-tool approval for new runs
 /model             show or update provider/model/base URL
 /theme             list, preview, or switch themes
@@ -199,10 +197,10 @@ Inside the TUI, type normal instructions to launch a run, or use slash commands:
 
 Useful keys:
 
-- `PageUp` / `PageDown` scroll transcript history so earlier tool errors remain inspectable
+- `PageUp` and `PageDown` scroll transcript history
 - `Home` jumps to the oldest visible transcript output
-- `End` returns to live/latest output
-- `Up` / `Down` move the selected stored session
+- `End` returns to live output
+- `Up` and `Down` move the selected stored session
 - `Ctrl-C` or `Escape` exits the TUI
 
 Scope defaults remain conservative. Public target scanning is opt-in and process-local from the TUI:
@@ -215,29 +213,112 @@ Run safe-active enumeration against this authorized VPS. Do not brute force, exp
 
 Use `/scope private` when done. To make public-target scope persistent across restarts, set `ALLOW_PRIVATE_ONLY=false` in the process environment or `~/.ares/.env`.
 
-## Config
+## Gateway and browser UI
 
-Ares loads simple `KEY=VALUE` entries from `~/.ares/.env` before reading config and before building model clients. Existing process environment values win for the same variable name.
+Start the lightweight control plane:
+
+```bash
+ares gateway
+```
+
+Configure exposure before remote use:
+
+```bash
+ares gateway-config --mode loopback
+ares gateway-config --mode lan --auth-enabled
+ares gateway-config --mode exposed --auth-enabled --allow-cidr 203.0.113.0/24
+```
+
+Gateway modes:
+
+- `loopback` binds for local use and rejects non-loopback clients
+- `lan` allows loopback, private, and link-local clients
+- `exposed` allows remote clients, so use bearer auth and a CIDR allowlist
+
+Pairing flow:
+
+```bash
+ares gateway-pair --label laptop
+```
+
+The gateway exposes a small browser UI plus JSON endpoints for health, run submission, run status, event polling, login, pairing, and pairing-code issuance. Auth events are written to `~/.ares/gateway-audit.jsonl`.
+
+## Agent routing and engagement memory
+
+Ares can route work to named agent profiles based on prompt content, target properties, private/public scope, ROE profile, or an explicit `--agent` request.
+
+Preview routing without running tools:
+
+```bash
+ares route --target example.onion --prompt "Search this hidden service safely"
+```
+
+List captured engagement memory:
+
+```bash
+ares memory
+ares memory --target 127.0.0.1
+ares memory --tag darkweb
+ares memory --query "nmap"
+```
+
+Current main uses compact session context from recent tool calls plus engagement-memory summaries. Engagement memory is explicitly inserted as untrusted historical context, not as operator instructions.
+
+## OnionClaw darkweb integration
+
+Ares treats OnionClaw as a bounded external integration rather than importing the full standalone workflow surface into the main agent.
+
+Current default behavior when OnionClaw is enabled:
+
+- registers only Tor checks, engine checks, search, fetch, offline analysis, keyword extraction, and export helpers
+- routes `.onion` targets and darkweb or hidden-service prompts into the `darkweb` agent profile
+- keeps exploit, watch, crawl, and broad autonomous LLM ask flows out of the default integration surface
+- stores integration-owned paths under `~/.ares/integrations/onionclaw/` unless overridden
+
+Example setup:
+
+```bash
+git clone https://github.com/christinminor459/OnionClaw.git /opt/onionclaw
+export ONIONCLAW_ENABLED=true
+export ONIONCLAW_REPO_PATH=/opt/onionclaw
+export ONIONCLAW_PYTHON_BIN=/usr/bin/python3
+export ONIONCLAW_ENV_PATH="$HOME/.ares/integrations/onionclaw/.env"
+export ONIONCLAW_DB_PATH="$HOME/.ares/integrations/onionclaw/sicry.db"
+```
+
+## Config reference
+
+Ares loads simple `KEY=VALUE` entries from `~/.ares/.env` before reading persisted config and before building model clients. Existing process environment values win for the same variable name.
+
+Common environment values:
 
 ```bash
 export APP_HOME="$HOME/.ares"
-export LLM_PROVIDER="openai"
+
+export LLM_PROVIDER="local"
 export LLM_MODEL="local-model"
 export OPENAI_BASE_URL="http://127.0.0.1:1234/v1"
-export OPENAI_API_KEY="***"
-export OPENAI_API_KEY="***"  # also accepted by the OpenAI-compatible adapter
+export OPENAI_API_KEY="lm-studio"
 export OPENROUTER_API_KEY="***"
 export ANTHROPIC_API_KEY="***"
 export GEMINI_API_KEY="***"
+export GOOGLE_API_KEY="***"
+
+export LLM_AUTH_MODE="api-key"
+export LLM_OAUTH_TOKEN_COMMAND=""
+export LLM_OAUTH_PROJECT=""
+export LLM_OAUTH_LOCATION=""
+
+export ROE_PROFILE="safe-active"
+export DEFAULT_MODE="safe-active"
+export ALLOW_PRIVATE_ONLY="true"
+export MAX_RISK="active"
+
 export ONIONCLAW_ENABLED="false"
 export ONIONCLAW_REPO_PATH="/opt/onionclaw"
 export ONIONCLAW_PYTHON_BIN="python3"
 export ONIONCLAW_ENV_PATH="$HOME/.ares/integrations/onionclaw/.env"
 export ONIONCLAW_DB_PATH="$HOME/.ares/integrations/onionclaw/sicry.db"
-export ROE_PROFILE="safe-active"
-export DEFAULT_MODE="safe-active"
-export ALLOW_PRIVATE_ONLY="true"
-export MAX_RISK="active"
 ```
 
 Defaults remain conservative:
@@ -245,44 +326,45 @@ Defaults remain conservative:
 - private and loopback targets only
 - max risk `active`
 - exploit and post-exploitation tools require approval
+- gateway mode `loopback`
 
-## Architecture map
+## Runtime architecture
 
-Primary operator surface:
+Ares runs through this control path:
 
-- `src/ares/cli.py` - primary Typer CLI
-- `src/ares/tui.py` - Hermes-style prompt_toolkit/Rich TUI shell with curses fallback
-- `src/ares/*` - user-facing modules over the runtime core
+```text
+operator prompt
+  -> agent router
+  -> model client or failover model
+  -> model-requested tool call
+  -> dispatcher policy choke point
+  -> ToolRegistry
+  -> tool adapter
+  -> SQLite state and event stream
+  -> compact model-facing result
+  -> Markdown report and engagement memory
+```
 
-Runtime core:
+Primary files:
 
-- `src/ares/config` - env/config loader
-- `src/ares/policy` - scope, risk, route, and ROE policy
-- `src/ares/tools` - central registry plus GhostMCP and OnionClaw adapters
-- `src/ares/agent` - prompt builder, context builder, dispatcher, runtime loop
-- `src/ares/llm` - model adapters
-- `src/ares/playbooks` - built-in playbooks
-- `src/ares/state` - SQLite persistence
-- `src/ares/evidence` - evidence parsers
-- `src/ares/reporting` - Markdown reports
-- `src/ares/run.py` - high-level runtime wiring
+- `src/ares/run.py` builds config, policy, registry, model clients, router selection, context summaries, dispatcher, runtime, events, hooks, persistence, and reports
+- `src/ares/agent/dispatcher.py` is the central tool-call choke point
+- `src/ares/agent/context_builder.py` builds compact model-facing session summaries
+- `src/ares/engagement_memory.py` stores and retrieves run summaries as untrusted prior context
+- `src/ares/state/db.py` owns SQLite tables for sessions, tool calls, messages, hosts, and services
+- `src/ares/gateway.py` owns the HTTP gateway, browser UI routes, event polling, auth checks, pairing, and audit events
+- `src/ares/config/loader.py` resolves environment, persisted JSON config, provider profiles, gateway modes, hooks, OnionClaw settings, and agent routing config
 
 ## Tests
 
-For local development and verification, install the editable package, the vendored GhostMCP tree, and the dev extras first:
-
-```bash
-python -m pip install -e . -e vendor/ghostmcp -e '.[dev]'
-```
-
-Then run the project test tree and a compile check:
+Run the project tests and a compile check:
 
 ```bash
 python -m pytest tests -q
 python -m compileall src/ares
 ```
 
-Targeted checks for onboarding/auth work:
+Targeted checks for onboarding, model setup, OAuth, and provider adapter work:
 
 ```bash
 python -m pytest tests/test_prompt_ui.py -q
@@ -294,6 +376,4 @@ python -m pytest tests/test_onboard_cli.py tests/test_cli_model.py tests/test_mo
 
 Ares should be treated as a supervised beta for authorized work. Keep human oversight in place, keep scopes explicit, and keep exploit and post-exploitation approvals outside the model.
 
-The v1 support boundary is documented in `docs/v1-support-boundary.md`.
-
-The `0.1.0b0` line is suitable for beta releases, internal operator testing, and reproducible packaged builds. The intended direction is to make Ares the strongest blend of Hermes-style agent execution and OpenClaw-style operator control for authorized pentesting, but this release should still be described as a supervised beta rather than a finished general-purpose platform.
+The `0.1.0b0` line is suitable for beta releases, internal operator testing, and reproducible packaged builds. Do not describe this release as a finished general-purpose autonomous pentest platform.
