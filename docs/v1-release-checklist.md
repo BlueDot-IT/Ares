@@ -9,6 +9,7 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Add CI to build wheel and sdist artifacts.
 - [x] Add CI smoke checks against the built wheel.
 - [x] Bump package metadata and runtime version to `1.0.0`.
+- [x] Add the `ares-dashboard` console script beside `ares` and `ares-tui`.
 
 ## Phase 2: Runtime, policy, and gateway hardening
 
@@ -17,6 +18,7 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Add gateway auth matrix tests for exposed mode, bearer parsing, pairing reuse, TTL handling, failed-login windows, and CIDR allowlists.
 - [x] Keep routing and policy enforcement deterministic.
 - [x] Keep high-risk approval gates outside the model.
+- [x] Keep the gateway defined as the API/control plane, not the browser dashboard.
 
 ## Phase 3: StateDB and evidence-memory stability
 
@@ -26,12 +28,14 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Rebuild memory FTS state for existing `memory_chunks` rows.
 - [x] Preserve LIKE fallback behavior when FTS5 is unavailable.
 
-## Phase 4: CLI/TUI onboarding and operator UX
+## Phase 4: CLI/TUI/dashboard onboarding and operator UX
 
 - [x] Make startup and help text consistent.
 - [x] Keep onboarding flows predictable in TTY and non-TTY use.
 - [x] Make operator-facing errors actionable.
 - [x] Document the full supported command surface.
+- [x] Separate gateway, dashboard, and TUI as distinct operator surfaces.
+- [x] Add `ares dashboard` and `ares-dashboard` as browser-facing launchers.
 
 ## Phase 5: Documentation and release boundary
 
@@ -40,11 +44,12 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Update release and install docs so they match the code.
 - [x] Update long-context docs so the training command matches the CLI.
 - [x] Keep README release language aligned with package metadata.
+- [x] Document the gateway/dashboard/TUI separation.
 
 ## Phase 6: Legacy removal
 
 - [x] Remove the PySide6 GUI path and root-level legacy CLI/main entrypoints.
-- [x] Make the main Ares CLI/TUI/Gateway surfaces obvious.
+- [x] Make the main Ares CLI/TUI/Gateway/Dashboard surfaces obvious.
 - [x] Ensure release docs no longer describe removed legacy surfaces as supported.
 
 ## Final local gate before tagging
@@ -70,6 +75,8 @@ python -m pip install dist/*.whl
 ares --version
 ares doctor
 ares tools
+ares dashboard --help
+ares-dashboard --help
 ares route --target 127.0.0.1 --prompt "safe local smoke test"
 ares training --out /tmp/ares-sft-smoke.jsonl --min-status final_response
 ```
