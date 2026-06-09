@@ -59,5 +59,7 @@ jobs:
           python -m pip install dist/*.whl
           ares --version
           ares doctor
+          ares dashboard --help
+          ares-dashboard --help
           ares route --target 127.0.0.1 --prompt "safe local smoke test"
           ares training --out /tmp/ares-sft-smoke.jsonl --min-status final_response
