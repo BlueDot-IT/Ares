@@ -75,6 +75,18 @@ class PromptUITests(unittest.TestCase):
 
         self.assertEqual(value, "gpt-4.1-mini")
 
+    def test_hidden_ask_text_non_tty_uses_scripted_input(self):
+        value = ask_text(
+            "Operator token",
+            default="generated-default",
+            hide_input=True,
+            use_tty=False,
+            input_fn=lambda prompt: "operator-secret",
+            output_fn=lambda text: None,
+        )
+
+        self.assertEqual(value, "operator-secret")
+
 
 if __name__ == "__main__":
     unittest.main()
