@@ -1,0 +1,94 @@
+<svg width="1280" height="420" viewBox="0 0 1280 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Ares autonomous pentesting runtime banner</title>
+  <desc id="desc">A dark technical banner for Ares showing model adapters, policy enforcement, tool registry, evidence memory, and reports.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#070A12"/>
+      <stop offset="0.48" stop-color="#101827"/>
+      <stop offset="1" stop-color="#210B13"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(970 92) rotate(126) scale(520 360)">
+      <stop stop-color="#FF4D6D" stop-opacity="0.42"/>
+      <stop offset="0.48" stop-color="#7C3AED" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="line" x1="240" y1="260" x2="1110" y2="260" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8" stop-opacity="0.15"/>
+      <stop offset="0.52" stop-color="#A78BFA" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#FB7185" stop-opacity="0.18"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="420" rx="32" fill="url(#bg)"/>
+  <rect width="1280" height="420" rx="32" fill="url(#glow)"/>
+
+  <g opacity="0.18">
+    <path d="M0 76H1280" stroke="#E5E7EB"/>
+    <path d="M0 144H1280" stroke="#E5E7EB"/>
+    <path d="M0 212H1280" stroke="#E5E7EB"/>
+    <path d="M0 280H1280" stroke="#E5E7EB"/>
+    <path d="M0 348H1280" stroke="#E5E7EB"/>
+    <path d="M120 0V420" stroke="#E5E7EB"/>
+    <path d="M260 0V420" stroke="#E5E7EB"/>
+    <path d="M400 0V420" stroke="#E5E7EB"/>
+    <path d="M540 0V420" stroke="#E5E7EB"/>
+    <path d="M680 0V420" stroke="#E5E7EB"/>
+    <path d="M820 0V420" stroke="#E5E7EB"/>
+    <path d="M960 0V420" stroke="#E5E7EB"/>
+    <path d="M1100 0V420" stroke="#E5E7EB"/>
+  </g>
+
+  <g opacity="0.55">
+    <circle cx="104" cy="86" r="2.5" fill="#38BDF8"/>
+    <circle cx="252" cy="146" r="2.5" fill="#A78BFA"/>
+    <circle cx="403" cy="280" r="2.5" fill="#FB7185"/>
+    <circle cx="821" cy="144" r="2.5" fill="#38BDF8"/>
+    <circle cx="960" cy="348" r="2.5" fill="#A78BFA"/>
+    <circle cx="1110" cy="212" r="2.5" fill="#FB7185"/>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <rect x="64" y="58" width="360" height="260" rx="28" fill="#0B1220" fill-opacity="0.86" stroke="#334155"/>
+    <path d="M124 250L198 104L268 250H232L218 220H178L164 250H124ZM188 190H208L198 166L188 190Z" fill="#F8FAFC"/>
+    <path d="M288 122C316 134 336 162 336 196C336 230 316 258 288 270" stroke="#FB7185" stroke-width="10" stroke-linecap="round"/>
+    <path d="M278 146C294 154 306 172 306 196C306 220 294 238 278 246" stroke="#38BDF8" stroke-width="10" stroke-linecap="round"/>
+    <text x="124" y="300" fill="#94A3B8" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18">AUTHORIZED TESTING ONLY</text>
+  </g>
+
+  <text x="466" y="106" fill="#F8FAFC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="68" font-weight="800" letter-spacing="2">ARES</text>
+  <text x="468" y="150" fill="#CBD5E1" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="500">Operator-supervised security agent runtime</text>
+  <text x="468" y="184" fill="#94A3B8" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Long context. Evidence memory. Policy choke points. Reports.</text>
+
+  <path d="M468 260H1112" stroke="url(#line)" stroke-width="3" stroke-linecap="round"/>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="16" font-weight="700" fill="#E2E8F0">
+    <g>
+      <rect x="468" y="224" width="144" height="72" rx="18" fill="#111827" fill-opacity="0.9" stroke="#334155"/>
+      <text x="500" y="255">MODEL</text>
+      <text x="500" y="278" fill="#94A3B8" font-size="13" font-weight="500">OpenAI, Claude, Gemini</text>
+    </g>
+    <g>
+      <rect x="648" y="224" width="144" height="72" rx="18" fill="#111827" fill-opacity="0.9" stroke="#334155"/>
+      <text x="681" y="255">POLICY</text>
+      <text x="676" y="278" fill="#94A3B8" font-size="13" font-weight="500">ROE, scope, approval</text>
+    </g>
+    <g>
+      <rect x="828" y="224" width="144" height="72" rx="18" fill="#111827" fill-opacity="0.9" stroke="#334155"/>
+      <text x="864" y="255">MEMORY</text>
+      <text x="858" y="278" fill="#94A3B8" font-size="13" font-weight="500">SQLite FTS recall</text>
+    </g>
+    <g>
+      <rect x="1008" y="224" width="144" height="72" rx="18" fill="#111827" fill-opacity="0.9" stroke="#334155"/>
+      <text x="1039" y="255">STATE</text>
+      <text x="1039" y="278" fill="#94A3B8" font-size="13" font-weight="500">Reports, training export</text>
+    </g>
+  </g>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#94A3B8">
+    <text x="468" y="350">CLI | TUI | HTTP gateway | event stream | memory chunks | markdown reports</text>
+    <text x="468" y="376">Beta 0.1.0b0 - human-controlled engagements, not unattended exploitation</text>
+  </g>
+</svg>
