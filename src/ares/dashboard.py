@@ -10,7 +10,15 @@ from ares.webui import build_web_ui_css, build_web_ui_html, build_web_ui_js
 
 
 def build_dashboard_html(*, auth_required: bool = False) -> str:
-    return build_web_ui_html(auth_required=auth_required)
+    return (
+        build_web_ui_html(auth_required=auth_required)
+        .replace("<title>Ares Web UI</title>", "<title>Ares Dashboard</title>")
+        .replace("<h1>Ares Web UI</h1>", "<h1>Ares Dashboard</h1>")
+        .replace(
+            "Hermes-style runtime, OpenClaw-style operator control, focused on pentesting.",
+            "Browser operator surface backed by the Ares gateway API/control plane.",
+        )
+    )
 
 
 def build_dashboard_css() -> str:
