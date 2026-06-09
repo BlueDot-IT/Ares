@@ -44,6 +44,7 @@ dev = ["pytest", "build"]
 
 [project.scripts]
 ares = "ares.cli:app"
+ares-dashboard = "ares.dashboard:dashboard_app"
 ares-tui = "ares.tui:main"
 
 [tool.pytest.ini_options]
