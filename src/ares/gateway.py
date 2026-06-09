@@ -12,10 +12,10 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from ares.config.loader import AppConfig, GatewayConfig, load_config, resolve_gateway_mode
+from ares.dashboard import build_dashboard_css, build_dashboard_html, build_dashboard_js
 from ares.gateway_auth import GatewayAuthManager, extract_bearer_token
 from ares.run import run_once
 from ares.secure_files import append_private_line
-from ares.webui import build_web_ui_css, build_web_ui_html, build_web_ui_js
 
 
 @dataclass
@@ -56,6 +56,12 @@ class GatewayRunState:
 
 
 class AresGateway:
+    """Backend gateway/control-plane state and actions.
+
+    The browser dashboard is a separate frontend surface served from
+    `ares.dashboard`; this class owns runs, events, auth, pairing, and audit.
+    """
+
     def __init__(
         self,
         *,
@@ -283,8 +289,9 @@ def start_gateway_server(
     mode: str = "loopback",
 ) -> ThreadingHTTPServer:
     access_mode = resolve_gateway_mode(mode)
+
     class GatewayHandler(BaseHTTPRequestHandler):
-        server_version = "AresGateway/0.1"
+        server_version = "AresGateway/1.0"
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -294,20 +301,20 @@ def start_gateway_server(
             if not self._request_authorized(parsed.path):
                 self._reject_unauthorized()
                 return
-            if parsed.path == "/":
+            if parsed.path in {"/", "/dashboard"}:
                 self._send_text(
-                    build_web_ui_html(auth_required=gateway.auth.auth_required(mode=access_mode)),
+                    build_dashboard_html(auth_required=gateway.auth.auth_required(mode=access_mode)),
                     content_type="text/html; charset=utf-8",
                 )
                 return
             if parsed.path == "/app.js":
                 self._send_text(
-                    build_web_ui_js(auth_required=gateway.auth.auth_required(mode=access_mode)),
+                    build_dashboard_js(auth_required=gateway.auth.auth_required(mode=access_mode)),
                     content_type="application/javascript; charset=utf-8",
                 )
                 return
             if parsed.path == "/app.css":
-                self._send_text(build_web_ui_css(), content_type="text/css; charset=utf-8")
+                self._send_text(build_dashboard_css(), content_type="text/css; charset=utf-8")
                 return
             if parsed.path == "/health":
                 self._send_json({"status": "ok", "runs": len(gateway.list_runs())})
@@ -408,7 +415,7 @@ def start_gateway_server(
             )
 
         def _request_authorized(self, path: str) -> bool:
-            if path in {"/", "/app.js", "/app.css", "/api/auth/login", "/api/auth/pair"}:
+            if path in {"/", "/dashboard", "/app.js", "/app.css", "/api/auth/login", "/api/auth/pair"}:
                 return True
             if not gateway.auth.auth_required(mode=access_mode):
                 return True
