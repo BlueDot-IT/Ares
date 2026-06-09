@@ -4,9 +4,9 @@
 
 # Ares
 
-Ares is a beta, operator-supervised security testing runtime for authorized engagements. It combines model-driven task execution with OpenClaw-style operator control. The model can reason and request tools, but Ares keeps scope, risk, approval, routing, persistence, evidence recall, and reporting outside the model.
+Ares is a stable v1, operator-supervised security testing runtime for authorized engagements. It combines model-driven task execution with OpenClaw-style operator control. The model can reason and request tools, but Ares keeps scope, risk, approval, routing, persistence, evidence recall, and reporting outside the model.
 
-Release status: `0.1.0b0`. Treat this as a supervised beta for controlled assessment work, not an unattended production system.
+Release status: `1.0.0`. Treat this as a supervised operator platform for controlled assessment work, not an unattended production system.
 
 Authorized testing only. Do not use Ares against systems you do not own or do not have explicit permission to assess.
 
@@ -178,7 +178,7 @@ ares model --fallback anthropic/claude-3-5-haiku-latest
 ares model
 ```
 
-OpenAI and Gemini have built-in browser OAuth flows in this branch:
+OpenAI and Gemini have built-in browser OAuth flows:
 
 ```bash
 ares auth login --provider openai
@@ -465,17 +465,18 @@ python -m pytest tests -q
 python -m compileall src/ares
 ```
 
-Targeted checks for the long-context and memory branch:
+Targeted checks for the long-context, memory, and v1 schema paths:
 
 ```bash
 python -m pytest tests/test_context_config.py tests/test_context_builder_budget.py -q
-python -m pytest tests/test_state_memory_chunks.py tests/test_evidence_memory_tools.py -q
-python -m pytest tests/test_training_export.py -q
+python -m pytest tests/test_state_memory_chunks.py tests/test_state_schema_migrations.py -q
+python -m pytest tests/test_evidence_memory_tools.py tests/test_training_export.py -q
 ```
 
-Targeted checks for onboarding, model setup, OAuth, and provider adapter work:
+Targeted checks for gateway/auth, onboarding, model setup, OAuth, and provider adapter work:
 
 ```bash
+python -m pytest tests/test_gateway_access.py tests/test_gateway_v1_auth_matrix.py tests/test_gateway_web_ui.py -q
 python -m pytest tests/test_prompt_ui.py -q
 python -m pytest tests/test_oauth_flows.py -q
 python -m pytest tests/test_onboard_cli.py tests/test_cli_model.py tests/test_model_config.py tests/test_llm_provider_adapters.py tests/test_cli_auth.py -q
@@ -483,6 +484,6 @@ python -m pytest tests/test_onboard_cli.py tests/test_cli_model.py tests/test_mo
 
 ## Release guidance
 
-Ares should be treated as a supervised beta for authorized work. Keep human oversight in place, keep scopes explicit, and keep high-risk approvals outside the model.
+Ares should be treated as a supervised v1 release for authorized work. Keep human oversight in place, keep scopes explicit, and keep high-risk approvals outside the model.
 
-The `0.1.0b0` line is suitable for beta releases, internal operator testing, and reproducible packaged builds. Do not describe this release as a finished general-purpose autonomous platform.
+The `1.0.0` line is suitable for stable tagged releases, internal operator testing, and reproducible packaged builds. Do not describe this release as an unattended autonomous assessment platform.
