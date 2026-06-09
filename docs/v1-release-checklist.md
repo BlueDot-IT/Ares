@@ -11,6 +11,8 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Add tag-triggered release artifact workflow.
 - [x] Bump package metadata and runtime version to `1.0.0`.
 - [x] Add the `ares-dashboard` console script beside `ares` and `ares-tui`.
+- [x] Keep editable install commands from installing Ares twice.
+- [x] Keep wheel smoke commands from matching stale wheels in `dist/`.
 
 ## Phase 2: Runtime, policy, and gateway hardening
 
@@ -57,23 +59,28 @@ This checklist is the release gate for the stable `v1.0.0` line.
 
 ## Final local gate before tagging
 
-Run this from a clean checkout before creating the release tag:
+Run this from a clean checkout before creating or moving the release tag:
 
 ```bash
 git checkout main
-git pull origin main
+git fetch origin --prune
+git reset --hard origin/main
+git clean -fdx -e vendor/ghostmcp
+
+git submodule update --init --recursive
 
 python -m venv .venv-v1
 . .venv-v1/bin/activate
 python -m pip install --upgrade pip build
-python -m pip install -e . -e vendor/ghostmcp -e '.[dev]' '.[anthropic]' '.[gemini]' '.[ghostmcp]'
+python -m pip install -e '.[dev,anthropic,gemini,ghostmcp]' -e vendor/ghostmcp
 
 python -m pytest tests -q
 python -m compileall src/ares
 
+rm -rf dist build src/*.egg-info
 python -m build
 python -m pip uninstall -y ares
-python -m pip install dist/*.whl
+python -m pip install dist/ares-1.0.0-py3-none-any.whl
 
 ares --version
 ares doctor
@@ -86,9 +93,18 @@ ares training --out /tmp/ares-sft-smoke.jsonl --min-status final_response
 
 ## Tag command
 
-After the final local gate passes:
+After the final local gate passes, create the tag if it does not already exist:
 
 ```bash
+git tag -a v1.0.0 -m "Ares v1.0.0"
+git push origin v1.0.0
+```
+
+If `v1.0.0` was already pushed before the final gate passed, move it to the validated commit:
+
+```bash
+git tag -d v1.0.0
+git push origin :refs/tags/v1.0.0
 git tag -a v1.0.0 -m "Ares v1.0.0"
 git push origin v1.0.0
 ```
