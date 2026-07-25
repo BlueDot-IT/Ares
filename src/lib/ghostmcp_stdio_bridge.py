@@ -8,12 +8,18 @@ from lib.ghostmcp_runner import GhostMCPToolRunner
 from lib.mcp_session import read_rpc_message, write_rpc_message
 
 
+def _mapping_copy(value: Any) -> dict[str, Any] | None:
+    return dict(value) if isinstance(value, dict) else None
+
+
 def _tool_inventory(runner: GhostMCPToolRunner) -> list[dict[str, Any]]:
     return [
         {
             "name": name,
             "description": str(tool_info.get("description") or ""),
-            "inputSchema": dict(tool_info.get("inputSchema")) if isinstance(tool_info.get("inputSchema"), dict) else {"type": "object", "additionalProperties": True},
+            "inputSchema": _mapping_copy(tool_info.get("inputSchema"))
+            or {"type": "object", "additionalProperties": True},
+            "security": _mapping_copy(tool_info.get("security")),
         }
         for name, tool_info in sorted(runner.tools.items())
     ]
@@ -64,7 +70,7 @@ def main() -> None:
             continue
         try:
             if method == "initialize":
-                result = {
+                result: dict[str, Any] = {
                     "protocolVersion": params.get("protocolVersion") or "2024-11-05",
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "ares-ghostmcp-bridge", "version": "0.1.0b0"},

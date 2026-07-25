@@ -39,7 +39,7 @@ Issues = "https://github.com/jason-allen-oneal/Ares/issues"
 [project.optional-dependencies]
 anthropic = ["anthropic"]
 gemini = ["google-auth", "google-auth-oauthlib", "google-genai"]
-ghostmcp = ["ghostmcp-server", "mcp"]
+ghostmcp = ["ghostmcp-server==0.2.0", "mcp>=1.28.1"]
 dev = ["pytest", "build"]
 
 [project.scripts]

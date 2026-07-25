@@ -64,6 +64,40 @@ class DispatcherApprovalTests(unittest.TestCase):
         result = dispatcher.dispatch(ToolCall(name="exploit_tool", args={"target": "127.0.0.1"}))
 
         self.assertEqual(result.status, "ok")
+
+    def test_role_risk_floor_requires_approval_for_lower_risk_tool(self) -> None:
+        from ares.agent.dispatcher import ToolDispatcher
+        from ares.agent.runtime import ToolCall
+        from ares.policy.context import PolicyContext
+        from ares.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register(
+            name="smbmap",
+            toolset="ghostmcp",
+            risk="active",
+            schema={"type": "object", "properties": {}},
+            handler=lambda _args: {"ok": True},
+        )
+        dispatcher = ToolDispatcher(
+            registry=registry,
+            policy=PolicyContext(max_risk="post-exploitation"),
+        )
+        result = dispatcher.dispatch(
+            ToolCall(name="smbmap", required_risk="post-exploitation")
+        )
+        self.assertEqual(result.status, "error")
+        self.assertIn("approval denied", result.error)
+
+        approved = ToolDispatcher(
+            registry=registry,
+            policy=PolicyContext(max_risk="post-exploitation"),
+            approval_callback=lambda _call, _entry: True,
+        )
+        result = approved.dispatch(
+            ToolCall(name="smbmap", required_risk="post-exploitation")
+        )
+        self.assertEqual(result.status, "ok")
         self.assertEqual(result.result, {"ok": True})
 
 

@@ -5,7 +5,12 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
+
+if TYPE_CHECKING:
+    from ares.mission.findings import MissionFinding
+    from ares.mission.model import MissionRun
+    from ares.mission.tasks import MissionTask
 
 STATE_SCHEMA_VERSION = 1
 
@@ -41,6 +46,7 @@ class StateDB:
             self._ensure_hosts_schema(conn)
             self._ensure_services_schema(conn)
             self._ensure_memory_schema(conn)
+            self._ensure_mission_schema(conn)
             self._set_schema_version(conn, STATE_SCHEMA_VERSION)
 
     def _ensure_schema_meta(self, conn: sqlite3.Connection) -> None:
@@ -229,6 +235,78 @@ class StateDB:
 
     def _rebuild_memory_fts(self, conn: sqlite3.Connection) -> None:
         conn.execute("INSERT INTO memory_chunks_fts(memory_chunks_fts) VALUES ('rebuild')")
+
+    def _ensure_mission_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS missions (
+                id TEXT PRIMARY KEY,
+                created_at REAL NOT NULL,
+                profile_id TEXT NOT NULL,
+                target TEXT NOT NULL,
+                scope_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mission_tasks (
+                id TEXT PRIMARY KEY,
+                mission_id TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                role_id TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                tool_name TEXT,
+                toolset TEXT NOT NULL,
+                target TEXT NOT NULL,
+                description TEXT NOT NULL,
+                args_json TEXT NOT NULL DEFAULT '{}',
+                depends_on_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL,
+                block_reason TEXT,
+                FOREIGN KEY(mission_id) REFERENCES missions(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mission_findings (
+                id TEXT PRIMARY KEY,
+                mission_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                state TEXT NOT NULL,
+                affected_component TEXT,
+                evidence_chunk_ids_json TEXT NOT NULL DEFAULT '[]',
+                confidence REAL NOT NULL DEFAULT 0,
+                validator_note TEXT,
+                recommendation TEXT,
+                redacted TEXT,
+                FOREIGN KEY(mission_id) REFERENCES missions(id)
+            )
+            """
+        )
+        self._ensure_column(conn, "mission_findings", "redacted", "TEXT")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mission_operator_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mission_id TEXT NOT NULL,
+                task_id TEXT,
+                role_id TEXT NOT NULL,
+                session_id INTEGER,
+                started_at REAL NOT NULL,
+                finished_at REAL,
+                status TEXT NOT NULL,
+                summary TEXT,
+                FOREIGN KEY(mission_id) REFERENCES missions(id),
+                FOREIGN KEY(session_id) REFERENCES sessions(id)
+            )
+            """
+        )
 
     def create_session(
         self,
@@ -506,3 +584,178 @@ class StateDB:
                 if len(results) >= limit:
                     break
             return results[:limit]
+
+    def create_mission(self, mission: MissionRun) -> None:
+        scope_data = {
+            "target": mission.scope.target,
+            "allowed_paths": mission.scope.allowed_paths,
+            "forbidden_paths": mission.scope.forbidden_paths,
+            "allowed_hosts": mission.scope.allowed_hosts,
+            "forbidden_actions": mission.scope.forbidden_actions,
+            "max_risk": mission.scope.max_risk,
+        }
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO missions (
+                    id, created_at, profile_id, target, scope_json, status, phase, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mission.id,
+                    time.time(),
+                    mission.profile_id,
+                    mission.scope.target,
+                    json.dumps(scope_data),
+                    mission.status.value if hasattr(mission.status, "value") else str(mission.status),
+                    mission.phase.value if hasattr(mission.phase, "value") else str(mission.phase),
+                    json.dumps(mission.metadata),
+                ),
+            )
+
+    def get_mission(self, mission_id: str) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            row = conn.execute("SELECT * FROM missions WHERE id = ?", (mission_id,)).fetchone()
+            if row is None:
+                return None
+            res = dict(row)
+            res["scope"] = json.loads(res.pop("scope_json"))
+            res["metadata"] = json.loads(res.pop("metadata_json"))
+            return res
+
+    def list_missions(self) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            rows = conn.execute("SELECT * FROM missions ORDER BY created_at").fetchall()
+            results = []
+            for row in rows:
+                res = dict(row)
+                res["scope"] = json.loads(res.pop("scope_json"))
+                res["metadata"] = json.loads(res.pop("metadata_json"))
+                results.append(res)
+            return results
+
+    def update_mission_status(self, mission_id: str, status: str, phase: str | None = None) -> None:
+        with self._connection() as conn:
+            if phase is not None:
+                conn.execute(
+                    "UPDATE missions SET status = ?, phase = ? WHERE id = ?",
+                    (status, phase, mission_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE missions SET status = ? WHERE id = ?",
+                    (status, mission_id),
+                )
+
+    def record_mission_task(self, task: MissionTask) -> None:
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO mission_tasks (
+                    id, mission_id, created_at, role_id, phase, tool_name, toolset, target, description,
+                    args_json, depends_on_json, status, block_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task.id,
+                    task.mission_id,
+                    time.time(),
+                    task.role_id,
+                    task.phase,
+                    task.tool_name,
+                    task.toolset,
+                    task.target,
+                    task.description,
+                    json.dumps(task.args),
+                    json.dumps(task.depends_on),
+                    task.status.value if hasattr(task.status, "value") else str(task.status),
+                    task.block_reason,
+                ),
+            )
+
+    def update_mission_task_status(self, task_id: str, status: str, block_reason: str = "") -> None:
+        with self._connection() as conn:
+            conn.execute(
+                "UPDATE mission_tasks SET status = ?, block_reason = ? WHERE id = ?",
+                (status, block_reason, task_id),
+            )
+
+    def list_mission_tasks(self, mission_id: str) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM mission_tasks WHERE mission_id = ? ORDER BY created_at",
+                (mission_id,),
+            ).fetchall()
+            results = []
+            for row in rows:
+                res = dict(row)
+                res["args"] = json.loads(res.pop("args_json"))
+                res["depends_on"] = json.loads(res.pop("depends_on_json"))
+                results.append(res)
+            return results
+
+    def record_mission_finding(self, finding: MissionFinding) -> None:
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO mission_findings (
+                    id, mission_id, title, severity, state, affected_component,
+                    evidence_chunk_ids_json, confidence, validator_note, recommendation, redacted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    finding.id,
+                    finding.mission_id,
+                    finding.title,
+                    finding.severity.value if hasattr(finding.severity, "value") else str(finding.severity),
+                    finding.state.value if hasattr(finding.state, "value") else str(finding.state),
+                    finding.affected_component,
+                    json.dumps(finding.evidence_chunk_ids),
+                    finding.confidence,
+                    finding.validator_note,
+                    finding.recommendation,
+                    finding.redacted,
+                ),
+            )
+
+    def list_mission_findings(self, mission_id: str) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM mission_findings WHERE mission_id = ?",
+                (mission_id,),
+            ).fetchall()
+            results = []
+            for row in rows:
+                res = dict(row)
+                res["evidence_chunk_ids"] = json.loads(res.pop("evidence_chunk_ids_json"))
+                results.append(res)
+            return results
+
+    def record_mission_operator_run(
+        self,
+        *,
+        mission_id: str,
+        task_id: str | None,
+        role_id: str,
+        session_id: int | None,
+        status: str,
+        summary: str = "",
+    ) -> int:
+        with self._connection() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO mission_operator_runs (
+                    mission_id, task_id, role_id, session_id, started_at, status, summary
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mission_id,
+                    task_id,
+                    role_id,
+                    session_id,
+                    time.time(),
+                    status,
+                    summary,
+                ),
+            )
+            return int(cur.lastrowid)

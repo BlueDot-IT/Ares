@@ -157,3 +157,104 @@ def export_training_data(
                 exported += 1
 
     return exported
+
+def export_mission_traces(state_db: StateDB, out_path: Path | str) -> int:
+    """Export completed mission traces to JSONL for training purposes."""
+    import json
+    from ares.mission.model import MissionRun, MissionScope, MissionStatus, MissionPhase
+    from ares.mission.report import render_mission_report
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    missions = state_db.list_missions()
+    exported = 0
+
+    with out_path.open("w", encoding="utf-8") as f:
+        for m in missions:
+            if m.get("status") != "completed":
+                continue
+
+            m_id = m["id"]
+            tasks = state_db.list_mission_tasks(m_id)
+            findings = state_db.list_mission_findings(m_id)
+
+            with state_db._connection() as conn:
+                session_rows = conn.execute(
+                    "SELECT DISTINCT session_id FROM mission_operator_runs WHERE mission_id = ?",
+                    (m_id,)
+                ).fetchall()
+            session_ids = [r["session_id"] for r in session_rows if r["session_id"] is not None]
+
+            evidence_chunks = []
+            if session_ids:
+                placeholders = ",".join("?" for _ in session_ids)
+                with state_db._connection() as conn:
+                    rows = conn.execute(
+                        f"SELECT * FROM memory_chunks WHERE session_id IN ({placeholders})",
+                        session_ids
+                    ).fetchall()
+                    for r in rows:
+                        c = dict(r)
+                        c["tags"] = json.loads(c.pop("tags_json"))
+                        evidence_chunks.append(c)
+
+            evidence_chunk_ids = [c["id"] for c in evidence_chunks]
+
+            scope_data = m["scope"]
+            scope = MissionScope(
+                target=scope_data.get("target", ""),
+                allowed_paths=scope_data.get("allowed_paths") or [],
+                forbidden_paths=scope_data.get("forbidden_paths") or [],
+                allowed_hosts=scope_data.get("allowed_hosts") or [],
+                forbidden_actions=scope_data.get("forbidden_actions") or [],
+                max_risk=scope_data.get("max_risk", "post-exploitation"),
+            )
+            mission_run = MissionRun(
+                id=m["id"],
+                profile_id=m["profile_id"],
+                scope=scope,
+                status=MissionStatus(m["status"]),
+                phase=MissionPhase(m["phase"]),
+            )
+
+            report_summary = render_mission_report(
+                mission=mission_run,
+                tasks=tasks,
+                findings=findings,
+                evidence_chunks=evidence_chunks,
+            )
+
+            redacted_report = redact_secrets(report_summary)
+
+            redacted_tasks = []
+            for t in tasks:
+                rt = dict(t)
+                rt["description"] = redact_secrets(rt["description"])
+                redacted_tasks.append(rt)
+
+            redacted_findings = []
+            for fd in findings:
+                rf = dict(fd)
+                rf["title"] = redact_secrets(rf["title"])
+                rf["validator_note"] = redact_secrets(rf["validator_note"])
+                rf["recommendation"] = redact_secrets(rf["recommendation"])
+                if "redacted" in rf and rf["redacted"]:
+                    rf["redacted"] = redact_secrets(rf["redacted"])
+                redacted_findings.append(rf)
+
+            record = {
+                "type": "mission_trace",
+                "mission_id": m_id,
+                "profile_id": m["profile_id"],
+                "target": redact_secrets(m.get("target", "")),
+                "tasks": redacted_tasks,
+                "findings": redacted_findings,
+                "evidence_chunk_ids": evidence_chunk_ids,
+                "report_summary": redacted_report,
+            }
+
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            exported += 1
+
+    return exported

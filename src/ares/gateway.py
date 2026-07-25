@@ -16,6 +16,8 @@ from ares.dashboard import build_dashboard_css, build_dashboard_html, build_dash
 from ares.gateway_auth import GatewayAuthManager, extract_bearer_token
 from ares.run import run_once
 from ares.secure_files import append_private_line
+from ares.state.db import StateDB
+
 
 
 @dataclass
@@ -334,6 +336,78 @@ def start_gateway_server(
                 events = gateway.get_events(after=after)
                 self._send_json({"count": len(events), "events": events})
                 return
+            if parsed.path == "/api/mission/list":
+                db = StateDB(gateway.config.home / "state.db")
+                self._send_json(db.list_missions())
+                return
+            if parsed.path.startswith("/api/mission/"):
+                parts = parsed.path.strip("/").split("/")
+                if len(parts) == 3:
+                    mission_id = parts[2]
+                    db = StateDB(gateway.config.home / "state.db")
+                    m = db.get_mission(mission_id)
+                    if m:
+                        self._send_json(m)
+                    else:
+                        self._send_json({"error": "mission_not_found"}, status=404)
+                    return
+                elif len(parts) == 4 and parts[3] == "report":
+                    mission_id = parts[2]
+                    db = StateDB(gateway.config.home / "state.db")
+                    m_dict = db.get_mission(mission_id)
+                    if not m_dict:
+                        self._send_json({"error": "mission_not_found"}, status=404)
+                        return
+
+                    from ares.mission.model import MissionRun, MissionScope, MissionStatus, MissionPhase
+                    from ares.mission.report import render_mission_report
+                    scope_data = m_dict["scope"]
+                    scope = MissionScope(
+                        target=scope_data.get("target", ""),
+                        allowed_paths=scope_data.get("allowed_paths") or [],
+                        forbidden_paths=scope_data.get("forbidden_paths") or [],
+                        allowed_hosts=scope_data.get("allowed_hosts") or [],
+                        forbidden_actions=scope_data.get("forbidden_actions") or [],
+                        max_risk=scope_data.get("max_risk", "post-exploitation"),
+                    )
+                    mission_run = MissionRun(
+                        id=m_dict["id"],
+                        profile_id=m_dict["profile_id"],
+                        scope=scope,
+                        status=MissionStatus(m_dict["status"]),
+                        phase=MissionPhase(m_dict["phase"]),
+                    )
+                    tasks = db.list_mission_tasks(mission_id)
+                    findings = db.list_mission_findings(mission_id)
+
+                    with db._connection() as conn:
+                        session_rows = conn.execute(
+                            "SELECT DISTINCT session_id FROM mission_operator_runs WHERE mission_id = ?",
+                            (mission_id,)
+                        ).fetchall()
+                    session_ids = [r["session_id"] for r in session_rows if r["session_id"] is not None]
+
+                    memory_chunks = []
+                    if session_ids:
+                        placeholders = ",".join("?" for _ in session_ids)
+                        with db._connection() as conn:
+                            rows = conn.execute(
+                                f"SELECT * FROM memory_chunks WHERE session_id IN ({placeholders})",
+                                session_ids
+                            ).fetchall()
+                            for r in rows:
+                                c = dict(r)
+                                c["tags"] = json.loads(c.pop("tags_json"))
+                                memory_chunks.append(c)
+
+                    report = render_mission_report(
+                        mission=mission_run,
+                        tasks=tasks,
+                        findings=findings,
+                        evidence_chunks=memory_chunks,
+                    )
+                    self._send_json({"mission_id": mission_id, "report": report})
+                    return
             self._send_json({"error": "not_found"}, status=404)
 
         def do_POST(self) -> None:  # noqa: N802
@@ -377,6 +451,174 @@ def start_gateway_server(
             if not self._request_authorized(parsed.path):
                 self._reject_unauthorized()
                 return
+            if parsed.path == "/api/mission/run":
+                payload = self._read_json_payload()
+                profile_id = payload.get("profile_id", "secrets-audit")
+                target = payload.get("target")
+                if not target:
+                    self._send_json({"error": "missing_target"}, status=400)
+                    return
+                allowed_paths = payload.get("allowed_paths") or [target]
+                forbidden_paths = payload.get("forbidden_paths") or []
+                allowed_hosts = payload.get("allowed_hosts") or []
+                forbidden_actions = payload.get("forbidden_actions") or []
+                for field_name, field_value in (
+                    ("allowed_paths", allowed_paths),
+                    ("forbidden_paths", forbidden_paths),
+                    ("allowed_hosts", allowed_hosts),
+                    ("forbidden_actions", forbidden_actions),
+                ):
+                    if not isinstance(field_value, list) or not all(
+                        isinstance(item, str) for item in field_value
+                    ):
+                        self._send_json(
+                            {"error": f"{field_name}_must_be_string_array"},
+                            status=400,
+                        )
+                        return
+                max_risk = str(payload.get("max_risk") or "scan")
+                ghostmcp_policy_file = payload.get("ghostmcp_policy_file")
+                approve_high_risk = bool(
+                    payload.get("approve_high_risk", False)
+                )
+
+                requested_dry_run = bool(payload.get("dry_run", False))
+                if access_mode != "loopback":
+                    dry_run = True
+                else:
+                    dry_run = requested_dry_run
+
+                import secrets
+                import threading
+                m_id = str(payload.get("mission_id") or f"m_{secrets.token_hex(4)}")
+
+                from ares.mission.coordinator import MissionCoordinator
+                from ares.mission.model import (
+                    MissionPhase,
+                    MissionRun,
+                    MissionScope,
+                    MissionStatus,
+                )
+                from ares.mission.tasks import parse_initial_tasks
+
+                scope = MissionScope(
+                    target=target,
+                    allowed_paths=allowed_paths,
+                    forbidden_paths=forbidden_paths,
+                    allowed_hosts=allowed_hosts,
+                    forbidden_actions=forbidden_actions,
+                    max_risk=max_risk,
+                )
+                mission = MissionRun(
+                    id=m_id,
+                    profile_id=profile_id,
+                    scope=scope,
+                    status=MissionStatus.CREATED,
+                    phase=MissionPhase.PLAN,
+                )
+                try:
+                    coordinator = MissionCoordinator(mission)
+                    initial_tasks = (
+                        parse_initial_tasks(
+                            payload["initial_tasks"],
+                            mission_id=m_id,
+                        )
+                        if payload.get("initial_tasks") is not None
+                        else None
+                    )
+                    tasks = (
+                        initial_tasks
+                        if initial_tasks is not None
+                        else coordinator.seed_initial_tasks()
+                    )
+                    for task in tasks:
+                        valid, reason = coordinator.validate_task(task)
+                        if not valid:
+                            raise ValueError(
+                                f"task {task.id} failed validation: {reason}"
+                            )
+                    if (
+                        not dry_run
+                        and profile_id == "authorized-operator-validation"
+                        and not ghostmcp_policy_file
+                    ):
+                        raise ValueError(
+                            "ghostmcp_policy_file is required for authorized "
+                            "operator validation"
+                        )
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=400)
+                    return
+
+                if dry_run:
+                    task_list = [
+                        {
+                            "id": task.id,
+                            "role_id": task.role_id,
+                            "phase": task.phase,
+                            "description": task.description,
+                        }
+                        for task in tasks
+                    ]
+                    self._send_json({
+                        "mission_id": m_id,
+                        "profile_id": profile_id,
+                        "target": target,
+                        "dry_run": True,
+                        "tasks": task_list
+                    }, status=200)
+                    return
+                else:
+                    def run_bg():
+                        db = StateDB(gateway.config.home / "state.db")
+                        try:
+                            from ares.run import build_registry
+
+                            registry = build_registry(
+                                gateway.config,
+                                ghostmcp_engagement_policy_file=(
+                                    ghostmcp_policy_file
+                                ),
+                            )
+                            coordinator.run_deterministic(
+                                registry,
+                                db,
+                                initial_tasks=initial_tasks,
+                                approval_callback=(
+                                    (lambda _call, _entry: True)
+                                    if approve_high_risk
+                                    else None
+                                ),
+                            )
+                        except Exception as exc:
+                            if db.get_mission(m_id) is None:
+                                db.create_mission(mission)
+                            db.update_mission_status(m_id, "failed")
+                            gateway._record_event(
+                                {
+                                    "type": "mission_failed",
+                                    "mission_id": m_id,
+                                    "message": str(exc),
+                                }
+                            )
+                            gateway._append_audit_event(
+                                "mission_failed",
+                                mission_id=m_id,
+                                error_type=type(exc).__name__,
+                            )
+
+                    t = threading.Thread(target=run_bg, daemon=True)
+                    t.start()
+
+                    self._send_json({
+                        "mission_id": m_id,
+                        "profile_id": profile_id,
+                        "target": target,
+                        "dry_run": False,
+                        "status": "queued"
+                    }, status=202)
+                    return
+
             if parsed.path != "/api/runs":
                 self._send_json({"error": "not_found"}, status=404)
                 return

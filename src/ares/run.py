@@ -35,11 +35,26 @@ def build_policy(config: AppConfig) -> PolicyContext:
     )
 
 
-def build_registry(config: AppConfig | None = None, *, state_db: StateDB | None = None, session_id: int | None = None) -> ToolRegistry:
+def build_registry(
+    config: AppConfig | None = None,
+    *,
+    state_db: StateDB | None = None,
+    session_id: int | None = None,
+    ghostmcp_engagement_policy_file: str | Path | None = None,
+) -> ToolRegistry:
     config = config or load_config()
     registry = ToolRegistry()
-    register_ghostmcp_tools(registry, policy_allow_private_only=config.policy.allow_private_only)
+    ghostmcp_options: dict[str, Any] = {
+        "policy_allow_private_only": config.policy.allow_private_only,
+    }
+    if ghostmcp_engagement_policy_file is not None:
+        ghostmcp_options["engagement_policy_file"] = (
+            ghostmcp_engagement_policy_file
+        )
+    register_ghostmcp_tools(registry, **ghostmcp_options)
     register_onionclaw_tools(registry, config=config.onionclaw)
+    from ares.mission.tools import register_mission_tools
+    register_mission_tools(registry)
     if state_db is not None:
         register_evidence_tools(registry, state_db, session_id)
     return registry
@@ -395,6 +410,7 @@ def run_once(
         session_id=session_id,
         approval_callback=(lambda _call, _entry: True) if approve_dangerous else None,
         approval_required_risks=set(roe_profile.approval_required_risks),
+        engagement_id=f"ares-session-{session_id}",
     )
     runtime = AgentRuntime(
         model=model,

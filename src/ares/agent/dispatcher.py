@@ -7,6 +7,7 @@ from typing import Any, Callable
 from ares.agent.runtime import ToolCall, ToolResult
 from ares.agent.tool_result_indexer import should_index_tool_result, tool_result_to_memory_text
 from ares.policy.context import PolicyContext
+from ares.policy.risk import RISK_ORDER, risk_allows
 from ares.policy.route import RoutePolicy
 from ares.tools.registry import ToolRegistry
 
@@ -30,6 +31,7 @@ class ToolDispatcher:
         approval_required_risks: set[str] | None = None,
         route_policy: RoutePolicy | None = None,
         tool_timeout_seconds: float | None = None,
+        engagement_id: str | None = None,
     ) -> None:
         self.registry = registry
         self.policy = policy
@@ -39,6 +41,7 @@ class ToolDispatcher:
         self.approval_required_risks = approval_required_risks or {"exploit", "post-exploitation"}
         self.route_policy = route_policy or RoutePolicy()
         self.tool_timeout_seconds = tool_timeout_seconds
+        self.engagement_id = engagement_id
 
     def dispatch(self, call: ToolCall) -> ToolResult:
         started = time.perf_counter()
@@ -47,11 +50,24 @@ class ToolDispatcher:
             entry = self.registry.get_entry(call.name)
             if entry is None:
                 raise KeyError(f"unknown tool: {call.name}")
+            effective_risk = entry.risk
+            if call.required_risk is not None:
+                if call.required_risk not in RISK_ORDER:
+                    raise ValueError(f"unknown required risk level: {call.required_risk}")
+                if RISK_ORDER[call.required_risk] > RISK_ORDER[effective_risk]:
+                    effective_risk = call.required_risk
+            if not risk_allows(self.policy.max_risk, effective_risk):
+                raise PermissionError(
+                    f"risk policy violation: tool {call.name!r} effective risk "
+                    f"{effective_risk!r} exceeds max {self.policy.max_risk!r}"
+                )
             if self._is_duplicate_success(call):
                 raise RuntimeError("duplicate_successful_action: identical tool call already succeeded in this session")
-            if entry.risk in self.approval_required_risks:
+            if effective_risk in self.approval_required_risks:
                 if self.approval_callback is None or not self.approval_callback(call, entry):
-                    raise PermissionError(f"approval denied for tool {call.name!r} with risk {entry.risk!r}")
+                    raise PermissionError(
+                        f"approval denied for tool {call.name!r} with effective risk {effective_risk!r}"
+                    )
             target = self._target_from_args(call.args)
             with self.route_policy.apply_for_target(target):
                 raw_result = self._dispatch_registry(call)
@@ -79,10 +95,18 @@ class ToolDispatcher:
             return result
 
     def _dispatch_registry(self, call: ToolCall) -> Any:
+        context: dict[str, Any] = {"policy": self.policy}
+        if self.engagement_id is not None:
+            context["engagement_id"] = self.engagement_id
         if self.tool_timeout_seconds is None:
-            return self.registry.dispatch(call.name, call.args, policy=self.policy)
+            return self.registry.dispatch(call.name, call.args, **context)
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(self.registry.dispatch, call.name, call.args, policy=self.policy)
+            future = executor.submit(
+                self.registry.dispatch,
+                call.name,
+                call.args,
+                **context,
+            )
             try:
                 return future.result(timeout=self.tool_timeout_seconds)
             except concurrent.futures.TimeoutError as exc:

@@ -1,4 +1,6 @@
 RISK_ORDER = {
+    "safe": 0,
+    "scan": 1,
     "passive": 1,
     "active": 2,
     "intrusive": 3,

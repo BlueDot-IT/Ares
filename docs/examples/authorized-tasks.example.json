@@ -1,0 +1,15 @@
+[
+  {
+    "id": "bounded-smb-access-check",
+    "role_id": "infiltrator",
+    "phase": "post-exploitation",
+    "tool_name": "smbmap",
+    "toolset": "ghostmcp",
+    "target": "192.0.2.10",
+    "description": "Validate one explicitly authorized SMB access boundary.",
+    "args": {
+      "host": "192.0.2.10"
+    },
+    "depends_on": []
+  }
+]

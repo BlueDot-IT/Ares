@@ -14,6 +14,7 @@ class ToolCall:
     name: str
     args: dict[str, Any] = field(default_factory=dict)
     id: str = "tool-call"
+    required_risk: str | None = None
 
 
 @dataclass(frozen=True)

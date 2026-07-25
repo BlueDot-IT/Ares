@@ -25,6 +25,7 @@ class PolicyContext:
     allowed_cidrs: tuple[ipaddress._BaseNetwork, ...] = field(
         default_factory=lambda: DEFAULT_ALLOWED_CIDRS
     )
+    allowed_hosts: tuple[str, ...] = field(default_factory=tuple)
 
     def enforce_tool_call(self, tool_name: str, tool_risk: str, args: dict[str, Any]) -> None:
         if not risk_allows(self.max_risk, tool_risk):
@@ -38,6 +39,12 @@ class PolicyContext:
         host = self._target_to_host(target)
         if not host:
             return
+        if self.allowed_hosts:
+            if self._host_is_explicitly_allowed(host):
+                return
+            raise PermissionError(
+                f"scope policy violation: target {host!r} is outside explicit host scope"
+            )
         try:
             ip = ipaddress.ip_address(host)
         except ValueError:
@@ -84,3 +91,22 @@ class PolicyContext:
         if ":" in normalized:
             normalized = normalized.rsplit(":", 1)[0]
         return normalized in {"localhost", "localhost.localdomain"} or normalized.endswith(".local")
+
+    def _host_is_explicitly_allowed(self, host: str) -> bool:
+        normalized = host.strip().strip("[]").lower().rstrip(".")
+        try:
+            address = ipaddress.ip_address(normalized)
+        except ValueError:
+            for allowed in self.allowed_hosts:
+                candidate = self._target_to_host(str(allowed)).lower().rstrip(".")
+                if normalized == candidate:
+                    return True
+            return False
+        for allowed in self.allowed_hosts:
+            candidate = self._target_to_host(str(allowed))
+            try:
+                if address in ipaddress.ip_network(candidate, strict=False):
+                    return True
+            except ValueError:
+                continue
+        return False

@@ -27,6 +27,28 @@ class GhostMCPRunnerSchemaTests(unittest.TestCase):
         self.assertEqual(tcp_port_scan_schema["properties"]["ports"]["type"], "array")
         self.assertEqual(tcp_port_scan_schema["properties"]["ports"]["items"]["type"], "integer")
 
+    def test_vendored_runner_exposes_versioned_security_manifest(self):
+        from lib.ghostmcp_runner import GhostMCPToolRunner
+
+        runner = GhostMCPToolRunner(transport="inproc")
+        security = runner.tools["runtime_probe"]["security"]
+
+        self.assertEqual(security["manifest_schema"], "1.0")
+        self.assertEqual(security["server_version"], "0.2.0")
+        self.assertEqual(security["risk"], "passive")
+        self.assertIn("discovery", security["capabilities"])
+        runner.close()
+
+    def test_external_bridge_preserves_security_manifest(self):
+        from lib.ghostmcp_runner import GhostMCPToolRunner
+
+        runner = GhostMCPToolRunner(transport="external-stdio")
+        security = runner.tools["runtime_probe"]["security"]
+
+        self.assertEqual(security["manifest_schema"], "1.0")
+        self.assertEqual(security["server_version"], "0.2.0")
+        runner.close()
+
     def test_register_ghostmcp_tools_passes_scope_policy_to_default_runner(self):
         from ares.tools.ghostmcp_adapter import register_ghostmcp_tools, reset_default_ghostmcp_runner_cache
         from ares.tools.registry import ToolRegistry

@@ -81,6 +81,10 @@ For full local test coverage with the vendored GhostMCP tree:
 python -m pip install -e '.[dev,ghostmcp]' -e vendor/ghostmcp
 ```
 
+The `ghostmcp` extra and submodule are pinned to GhostMCP `v0.2.0`. Ares
+requires tool-manifest schema `1.0`; unsupported GhostMCP security metadata
+fails closed.
+
 ## First run
 
 ```bash
@@ -435,3 +439,23 @@ python -m pytest tests/test_onboard_cli.py tests/test_cli_model.py tests/test_mo
 Ares should be treated as a supervised v1 release for authorized work. Keep human oversight in place, keep scopes explicit, and keep high-risk approvals outside the model.
 
 The `1.0.0` line is suitable for stable tagged releases, internal operator testing, and reproducible packaged builds. Do not describe this release as an unattended autonomous assessment platform.
+
+## Experimental: Swarm Testing Missions
+
+Swarm Testing Missions coordinate multiple agent roles (`scanner`, `validator`, `analyst`) to execute structured vulnerability assessments and produce a verified, redacted Markdown report.
+
+To start a mission via the CLI:
+```bash
+ares mission run --profile secrets-audit --target bench/redteam/secrets-basic --out report.md
+```
+
+Available subcommands:
+- `ares mission run` / `ares mission-run`
+- `ares mission list` / `ares mission-list`
+- `ares mission report` / `ares mission-report`
+
+For details, see:
+- [Mission architecture](docs/mission-swarm.md)
+- [Mission CLI](docs/mission-cli.md)
+- [Mission tools](docs/mission-tools.md)
+- [Mission training export](docs/mission-training-export.md)

@@ -362,6 +362,7 @@ def build_screen_frame(
     background_job: BackgroundRunJob | None,
     last_refresh_ts: float,
     width: int = 108,
+    theme_name: str = DEFAULT_THEME,
 ) -> str:
     del active_view, last_refresh_ts
     return build_operator_shell_text(
@@ -373,7 +374,7 @@ def build_screen_frame(
         background_job=background_job,
         width=width,
         yolo_mode=bool(background_job.approve_dangerous) if background_job is not None else False,
-        theme_name=config.ui.theme,
+        theme_name=theme_name,
     )
 
 

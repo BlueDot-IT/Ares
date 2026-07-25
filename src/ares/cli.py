@@ -45,6 +45,8 @@ from ares.tui import launch_tui
 app = typer.Typer(help=f"{APP_NAME} autonomous testing suite", invoke_without_command=True)
 auth_app = typer.Typer(help="Manage cached OAuth credentials for supported model providers.")
 app.add_typer(auth_app, name="auth")
+mission_app = typer.Typer(help="Swarm testing missions")
+app.add_typer(mission_app, name="mission")
 
 
 @app.callback()
@@ -556,6 +558,272 @@ def tui(
 ) -> None:
     """Launch the interactive Ares terminal UI."""
     launch_tui(refresh_interval=refresh_interval, yolo_mode=yolo)
+
+
+@app.command("mission-run")
+def mission_run(
+    profile_id: str = typer.Option("secrets-audit", "--profile", "-p", help="Named mission profile"),
+    target: str = typer.Option(..., "--target", "-t", help="Authorized target path"),
+    allowed_path: list[str] | None = typer.Option(None, "--allowed-path", help="Scope allowed path (multiple allowed)"),
+    forbidden_path: list[str] | None = typer.Option(None, "--forbidden-path", help="Scope forbidden path (multiple allowed)"),
+    allowed_host: list[str] | None = typer.Option(None, "--allowed-host", help="Authorized host, CIDR, or domain (multiple allowed)"),
+    forbidden_action: list[str] | None = typer.Option(None, "--forbidden-action", help="Forbidden action phrase (multiple allowed)"),
+    max_risk: str = typer.Option("scan", "--max-risk", help="Mission risk ceiling"),
+    initial_tasks_file: str | None = typer.Option(None, "--initial-tasks", help="Explicit JSON task graph"),
+    ghostmcp_policy_file: str | None = typer.Option(None, "--ghostmcp-policy", help="Mode-0600 GhostMCP engagement policy"),
+    approve_high_risk: bool = typer.Option(False, "--approve-high-risk", help="Approve exploit/post-exploitation tasks in the supplied graph"),
+    mission_id: str | None = typer.Option(None, "--mission-id", help="Stable engagement ID; required to pre-authorize GhostMCP policy"),
+    out: str | None = typer.Option(None, "--out", "-o", help="Path to write the markdown report"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate and print plan/tasks, do not execute"),
+) -> None:
+    """Create and run a swarm testing mission on a target."""
+    from ares.mission.model import MissionRun, MissionScope, MissionStatus, MissionPhase
+    from ares.mission.coordinator import MissionCoordinator
+    cfg = load_config()
+    db = StateDB(cfg.home / "state.db")
+
+    m_id = mission_id or f"m_{secrets.token_hex(4)}"
+
+    scope = MissionScope(
+        target=target,
+        allowed_paths=allowed_path or [target],
+        forbidden_paths=forbidden_path or [],
+        allowed_hosts=allowed_host or [],
+        forbidden_actions=forbidden_action or [],
+        max_risk=max_risk,
+    )
+
+    mission = MissionRun(
+        id=m_id,
+        profile_id=profile_id,
+        scope=scope,
+        status=MissionStatus.CREATED,
+        phase=MissionPhase.PLAN,
+    )
+
+    try:
+        coordinator = MissionCoordinator(mission)
+    except Exception as exc:
+        typer.echo(f"Error initializing coordinator: {exc}")
+        raise typer.Exit(1)
+
+    if dry_run:
+        try:
+            from ares.mission.tasks import load_initial_tasks
+            tasks = (
+                load_initial_tasks(initial_tasks_file, mission_id=m_id)
+                if initial_tasks_file
+                else coordinator.seed_initial_tasks()
+            )
+            for task in tasks:
+                valid, reason = coordinator.validate_task(task)
+                if not valid:
+                    raise ValueError(f"task {task.id} failed validation: {reason}")
+            typer.echo(f"Mission ID: {m_id}")
+            typer.echo(f"Profile: {profile_id}")
+            typer.echo(f"Target: {target}")
+            typer.echo("\nPlanned Tasks:")
+            for t in tasks:
+                typer.echo(f"- {t.id} ({t.role_id} / {t.phase}): {t.description}")
+        except Exception as exc:
+            typer.echo(f"Dry run failed: {exc}")
+            raise typer.Exit(1)
+        return
+
+    from ares.mission.tasks import load_initial_tasks
+    initial_tasks = (
+        load_initial_tasks(initial_tasks_file, mission_id=m_id)
+        if initial_tasks_file
+        else None
+    )
+    if profile_id == "authorized-operator-validation":
+        if initial_tasks is None:
+            raise typer.BadParameter(
+                "--initial-tasks is required for authorized operator validation"
+            )
+        if not ghostmcp_policy_file:
+            raise typer.BadParameter(
+                "--ghostmcp-policy is required for authorized operator validation"
+            )
+    registry = build_registry(
+        cfg,
+        ghostmcp_engagement_policy_file=ghostmcp_policy_file,
+    )
+    from ares.mission.tools import register_mission_tools
+    register_mission_tools(registry)
+
+    typer.echo(f"Starting deterministic mission {m_id}...")
+    try:
+        report = coordinator.run_deterministic(
+            registry,
+            db,
+            initial_tasks=initial_tasks,
+            approval_callback=(
+                (lambda _call, _entry: True)
+                if approve_high_risk
+                else None
+            ),
+        )
+        stored = db.get_mission(m_id)
+        final_status = str(stored["status"]) if stored else "failed"
+        if final_status != "completed":
+            typer.echo(f"Mission ended with status: {final_status}")
+        else:
+            typer.echo("Mission completed successfully.")
+
+        if out is None:
+            out_dir = cfg.home / "reports"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"mission-report-{m_id}.md"
+        else:
+            out_path = Path(out)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        out_path.write_text(report, encoding="utf-8")
+        typer.echo(f"Report written to: {out_path.resolve()}")
+        if final_status != "completed":
+            raise typer.Exit(1)
+    except Exception as exc:
+        typer.echo(f"Mission failed: {exc}")
+        raise typer.Exit(1)
+
+
+@app.command("mission-list")
+def mission_list() -> None:
+    """List stored swarm testing missions."""
+    cfg = load_config()
+    db = StateDB(cfg.home / "state.db")
+
+    with db._connection() as conn:
+        rows = conn.execute("SELECT id, profile_id, status, target FROM missions ORDER BY created_at DESC").fetchall()
+
+    if not rows:
+        typer.echo("No missions found.")
+        return
+
+    typer.echo("Mission ID\tProfile\tStatus\tTarget")
+    typer.echo("=" * 60)
+    for r in rows:
+        typer.echo(f"{r['id']}\t{r['profile_id']}\t{r['status']}\t{r['target']}")
+
+
+@app.command("mission-report")
+def mission_report_cmd(
+    mission_id: str = typer.Argument(..., help="The mission ID to retrieve report for"),
+    out: str = typer.Option(..., "--out", "-o", help="Output path for the markdown report"),
+) -> None:
+    """Render and write a report for an existing mission."""
+    from ares.mission.report import render_mission_report
+    from ares.mission.model import MissionRun, MissionScope, MissionStatus, MissionPhase
+    import json
+
+    cfg = load_config()
+    db = StateDB(cfg.home / "state.db")
+
+    m_dict = db.get_mission(mission_id)
+    if not m_dict:
+        typer.echo(f"Mission '{mission_id}' not found.")
+        raise typer.Exit(1)
+
+    scope_data = m_dict["scope"] if isinstance(m_dict.get("scope"), dict) else {}
+    scope = MissionScope(
+        target=scope_data.get("target", ""),
+        allowed_paths=scope_data.get("allowed_paths") or [],
+        forbidden_paths=scope_data.get("forbidden_paths") or [],
+        allowed_hosts=scope_data.get("allowed_hosts") or [],
+        forbidden_actions=scope_data.get("forbidden_actions") or [],
+        max_risk=scope_data.get("max_risk", "post-exploitation"),
+    )
+    mission = MissionRun(
+        id=m_dict["id"],
+        profile_id=m_dict["profile_id"],
+        scope=scope,
+        status=MissionStatus(m_dict["status"]),
+        phase=MissionPhase(m_dict["phase"]),
+    )
+
+    tasks = db.list_mission_tasks(mission_id)
+    findings = db.list_mission_findings(mission_id)
+
+    with db._connection() as conn:
+        session_rows = conn.execute(
+            "SELECT DISTINCT session_id FROM mission_operator_runs WHERE mission_id = ?",
+            (mission_id,)
+        ).fetchall()
+        session_ids = [r["session_id"] for r in session_rows if r["session_id"] is not None]
+
+        memory_chunks = []
+        if session_ids:
+            placeholders = ",".join("?" for _ in session_ids)
+            rows = conn.execute(
+                f"SELECT * FROM memory_chunks WHERE session_id IN ({placeholders})",
+                session_ids
+            ).fetchall()
+            for r in rows:
+                c = dict(r)
+                c["tags"] = json.loads(c.pop("tags_json"))
+                memory_chunks.append(c)
+
+    report = render_mission_report(
+        mission=mission,
+        tasks=tasks,
+        findings=findings,
+        evidence_chunks=memory_chunks,
+    )
+
+    out_path = Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(report, encoding="utf-8")
+    typer.echo(f"Report written to: {out_path.resolve()}")
+
+
+@mission_app.command("run")
+def mission_run_sub(
+    profile_id: str = typer.Option("secrets-audit", "--profile", "-p", help="Named mission profile"),
+    target: str = typer.Option(..., "--target", "-t", help="Authorized target path"),
+    allowed_path: list[str] | None = typer.Option(None, "--allowed-path", help="Scope allowed path (multiple allowed)"),
+    forbidden_path: list[str] | None = typer.Option(None, "--forbidden-path", help="Scope forbidden path (multiple allowed)"),
+    allowed_host: list[str] | None = typer.Option(None, "--allowed-host", help="Authorized host, CIDR, or domain (multiple allowed)"),
+    forbidden_action: list[str] | None = typer.Option(None, "--forbidden-action", help="Forbidden action phrase (multiple allowed)"),
+    max_risk: str = typer.Option("scan", "--max-risk", help="Mission risk ceiling"),
+    initial_tasks_file: str | None = typer.Option(None, "--initial-tasks", help="Explicit JSON task graph"),
+    ghostmcp_policy_file: str | None = typer.Option(None, "--ghostmcp-policy", help="Mode-0600 GhostMCP engagement policy"),
+    approve_high_risk: bool = typer.Option(False, "--approve-high-risk", help="Approve exploit/post-exploitation tasks in the supplied graph"),
+    mission_id: str | None = typer.Option(None, "--mission-id", help="Stable engagement ID"),
+    out: str | None = typer.Option(None, "--out", "-o", help="Path to write the markdown report"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate and print plan/tasks, do not execute"),
+) -> None:
+    """Create and run a swarm testing mission on a target."""
+    mission_run(
+        profile_id=profile_id,
+        target=target,
+        allowed_path=allowed_path,
+        forbidden_path=forbidden_path,
+        allowed_host=allowed_host,
+        forbidden_action=forbidden_action,
+        max_risk=max_risk,
+        initial_tasks_file=initial_tasks_file,
+        ghostmcp_policy_file=ghostmcp_policy_file,
+        approve_high_risk=approve_high_risk,
+        mission_id=mission_id,
+        out=out,
+        dry_run=dry_run,
+    )
+
+
+@mission_app.command("list")
+def mission_list_sub() -> None:
+    """List stored swarm testing missions."""
+    mission_list()
+
+
+@mission_app.command("report")
+def mission_report_sub(
+    mission_id: str = typer.Argument(..., help="The mission ID to retrieve report for"),
+    out: str = typer.Option(..., "--out", "-o", help="Output path for the markdown report"),
+) -> None:
+    """Render and write a report for an existing mission."""
+    mission_report_cmd(mission_id=mission_id, out=out)
 
 
 if __name__ == "__main__":

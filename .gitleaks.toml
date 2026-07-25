@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic redaction-test values"
+regexes = [
+  '''sk-abc1234567890xyz''',
+  '''123456789abc''',
+]

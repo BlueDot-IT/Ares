@@ -104,6 +104,54 @@ class GhostMCPAdapterTests(unittest.TestCase):
         self.assertEqual(parameters["properties"], {})
         self.assertEqual(parameters["required"], [])
 
+    def test_manifest_controls_risk_and_engagement_arguments(self):
+        from ares.tools.ghostmcp_adapter import register_ghostmcp_tools
+        from ares.tools.registry import ToolRegistry
+
+        calls = []
+
+        class _FakeRunner:
+            tools = {
+                "bounded_remote": {
+                    "name": "bounded_remote",
+                    "description": "Bounded remote validation.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"host": {"type": "string"}},
+                        "required": ["host"],
+                    },
+                    "security": {
+                        "manifest_schema": "1.0",
+                        "server_version": "0.2.0",
+                        "risk": "intrusive",
+                        "capabilities": ["discovery", "remote_execution"],
+                        "available": True,
+                    },
+                }
+            }
+
+            def call(self, tool, args):
+                calls.append((tool, args))
+                return {"ok": True}
+
+        registry = ToolRegistry()
+        register_ghostmcp_tools(
+            registry,
+            toolset="ghostmcp.test",
+            runner=_FakeRunner(),
+        )
+        entry = registry.get_entry("bounded_remote")
+        self.assertEqual(entry.risk, "post-exploitation")
+
+        result = registry.dispatch(
+            "bounded_remote",
+            {"host": "127.0.0.1", "engagement_id": "attacker-value"},
+            engagement_id="m_authorized",
+        )
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(calls[0][1]["engagement_id"], "m_authorized")
+        self.assertEqual(calls[0][1]["engagement_mode"], "intrusive")
+
 
 if __name__ == "__main__":
     unittest.main()

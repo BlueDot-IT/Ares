@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import json
 import os
-import subprocess
 import sys
 import types
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType, UnionType
-from typing import Any, Callable, Dict, get_args, get_origin
+from typing import Any, get_args, get_origin
 
 from lib.mcp_session import MCPProcessSession, MCPServerParameters
 
@@ -25,6 +24,7 @@ class ToolSpec:
     raw_name: str
     description: str = ""
     input_schema: dict[str, Any] | None = None
+    security: dict[str, Any] | None = None
 
 
 def _json_schema_for_annotation(annotation: Any) -> dict[str, Any]:
@@ -40,7 +40,7 @@ def _json_schema_for_annotation(annotation: Any) -> dict[str, Any]:
         item_args = get_args(annotation)
         item_schema = _json_schema_for_annotation(item_args[0]) if item_args else {"type": "string"}
         return {"type": "array", "items": item_schema}
-    if origin in {dict, Dict}:
+    if origin is dict:
         return {"type": "object", "additionalProperties": True}
     if annotation in {str}:
         return {"type": "string"}
@@ -77,6 +77,10 @@ def _schema_for_callable(fn: Callable[..., Any]) -> dict[str, Any]:
     return schema
 
 
+def _mapping_copy(value: Any) -> dict[str, Any] | None:
+    return dict(value) if isinstance(value, dict) else None
+
+
 class GhostMCPToolRunner:
     """GhostMCP tool runner with optional external stdio transport.
 
@@ -86,13 +90,22 @@ class GhostMCPToolRunner:
       - inproc: load tools inside the current process.
     """
 
-    def __init__(self, transport: str = "auto", allow_private_only: bool | None = None) -> None:
+    def __init__(
+        self,
+        transport: str = "auto",
+        allow_private_only: bool | None = None,
+        engagement_policy_file: str | Path | None = None,
+    ) -> None:
         self.transport = transport
         self._client: _ExternalGhostMCPClient | None = None
         self._tools: dict[str, ToolSpec] = {}
         self._env_overrides: dict[str, str] = {}
         if allow_private_only is not None:
             self._env_overrides["GHOSTMCP_ALLOW_PRIVATE_ONLY"] = "true" if allow_private_only else "false"
+        if engagement_policy_file is not None:
+            self._env_overrides["GHOSTMCP_ENGAGEMENT_POLICY_FILE"] = str(
+                Path(engagement_policy_file).expanduser().resolve()
+            )
         if transport == "auto":
             try:
                 self._init_external()
@@ -121,11 +134,12 @@ class GhostMCPToolRunner:
                 "source": spec.source,
                 "description": spec.description,
                 "inputSchema": dict(spec.input_schema) if isinstance(spec.input_schema, dict) else None,
+                "security": dict(spec.security) if isinstance(spec.security, dict) else None,
             }
             for name, spec in sorted(self._tools.items())
         }
 
-    def call(self, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    def call(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         if tool not in self._tools:
             raise RuntimeError(f"Unknown tool: {tool}")
         if self._client is not None:
@@ -171,7 +185,8 @@ class GhostMCPToolRunner:
                 source=str(tool_info.get("source") or "external-stdio"),
                 raw_name=str(tool_info.get("raw_name") or name),
                 description=str(tool_info.get("description") or ""),
-                input_schema=dict(tool_info.get("inputSchema")) if isinstance(tool_info.get("inputSchema"), dict) else None,
+                input_schema=_mapping_copy(tool_info.get("inputSchema")),
+                security=_mapping_copy(tool_info.get("security")),
             )
             for name, tool_info in metadata.items()
         }
@@ -180,6 +195,7 @@ class GhostMCPToolRunner:
         self._tools = {}
         with self._patched_environment():
             for module, source in _load_tool_modules():
+                security_by_name = _security_metadata_from_module(module)
                 for raw_name, fn in _iter_module_tools(module):
                     name = _normalize_tool_name(raw_name)
                     if name in self._tools:
@@ -196,6 +212,7 @@ class GhostMCPToolRunner:
                         raw_name=raw_name,
                         description=(inspect.getdoc(fn) or "").strip(),
                         input_schema=_schema_for_callable(fn),
+                        security=security_by_name.get(raw_name),
                     )
 
     def _patched_environment(self):
@@ -252,7 +269,9 @@ class _ExternalGhostMCPClient:
                 "signature": "(…)" ,
                 "source": "external-stdio",
                 "description": str(tool.get("description") or ""),
-                "inputSchema": dict(tool.get("inputSchema")) if isinstance(tool.get("inputSchema"), dict) else {"type": "object", "additionalProperties": True},
+                "inputSchema": _mapping_copy(tool.get("inputSchema"))
+                or {"type": "object", "additionalProperties": True},
+                "security": _mapping_copy(tool.get("security")),
             }
             for tool in tools
             if isinstance(tool, dict) and tool.get("name")
@@ -277,6 +296,33 @@ def _normalize_tool_name(name: str) -> str:
     if normalized.endswith("_tool"):
         normalized = normalized[: -len("_tool")]
     return normalized
+
+
+def _security_metadata_from_module(
+    module: ModuleType,
+) -> dict[str, dict[str, Any]]:
+    manifest = getattr(module, "TOOL_MANIFEST", None)
+    version = str(getattr(module, "__version__", ""))
+    export = getattr(manifest, "export", None)
+    if not callable(export):
+        return {}
+    payload = export(version)
+    if not isinstance(payload, dict) or payload.get("schema_version") != "1.0":
+        raise RuntimeError("Unsupported GhostMCP tool manifest schema")
+    if not str(payload.get("server_version", "")).startswith("0.2."):
+        raise RuntimeError("Ares requires GhostMCP 0.2.x security metadata")
+    tools = payload.get("tools")
+    if not isinstance(tools, list):
+        raise RuntimeError("GhostMCP tool manifest is malformed")
+    metadata: dict[str, dict[str, Any]] = {}
+    for item in tools:
+        if not isinstance(item, dict) or not item.get("name"):
+            raise RuntimeError("GhostMCP tool manifest contains an invalid entry")
+        descriptor = dict(item)
+        descriptor["manifest_schema"] = "1.0"
+        descriptor["server_version"] = payload["server_version"]
+        metadata[str(item["name"])] = descriptor
+    return metadata
 
 
 def _load_tool_modules() -> list[tuple[ModuleType, str]]:
@@ -359,7 +405,7 @@ def _ensure_fastmcp_available() -> None:
         def streamable_http_app(self):
             return None
 
-    fastmcp_module.FastMCP = FakeFastMCP
+    fastmcp_module.FastMCP = FakeFastMCP  # type: ignore[attr-defined]
     setattr(mcp_module, "server", server_module)
     setattr(server_module, "fastmcp", fastmcp_module)
     sys.modules["mcp.server.fastmcp"] = fastmcp_module
