@@ -470,6 +470,9 @@ def start_gateway_server(
                             mission_id,
                         ),
                         planner_cycles=db.list_planner_cycles(mission_id),
+                        recovery_attempts=db.list_recovery_attempts(
+                            mission_id
+                        ),
                     )
                     self._send_json({"mission_id": mission_id, "report": report})
                     return
@@ -641,17 +644,59 @@ def start_gateway_server(
                             "ghostmcp_policy_file is required for authorized "
                             "operator validation"
                         )
+                    approval_receipts = []
+                    from ares.mission.approvals import ADVANCED_ROLES
+                    advanced_tasks = [
+                        task for task in tasks
+                        if task.role_id in ADVANCED_ROLES
+                    ]
+                    if (
+                        profile_id == "authorized-operator-validation"
+                        and not dry_run
+                        and advanced_tasks
+                    ):
+                        if not approve_high_risk:
+                            raise ValueError(
+                                "approve_high_risk is required for authorized "
+                                "operator validation"
+                            )
+                        from ares.mission.approvals import (
+                            parse_approval_receipts,
+                        )
+                        approval_receipts = parse_approval_receipts(
+                            payload.get("approval_receipts")
+                        )
+                        receipt_ids = {
+                            receipt["id"] for receipt in approval_receipts
+                        }
+                        for task in advanced_tasks:
+                            if task.approval_receipt_id not in receipt_ids:
+                                raise ValueError(
+                                    f"advanced task {task.id} does not "
+                                    "reference a supplied approval receipt"
+                                )
                 except Exception as exc:
                     self._send_json({"error": str(exc)}, status=400)
                     return
 
                 if dry_run:
+                    from ares.mission.approvals import task_approval_digest
                     task_list = [
                         {
                             "id": task.id,
                             "role_id": task.role_id,
                             "phase": task.phase,
                             "description": task.description,
+                            **(
+                                {
+                                    "approval_digest": task_approval_digest(task)
+                                }
+                                if task.role_id in {
+                                    "exploiter", "infiltrator",
+                                    "exfiltrator", "ghost",
+                                }
+                                else {}
+                            ),
                         }
                         for task in tasks
                     ]
@@ -675,6 +720,25 @@ def start_gateway_server(
                                     ghostmcp_policy_file
                                 ),
                             )
+                            for receipt in approval_receipts:
+                                authenticated_source = str(
+                                    approval_provenance.get("source")
+                                    if approval_provenance else ""
+                                )
+                                authenticated_approver = str(
+                                    approval_provenance.get("session_id")
+                                    if approval_provenance else ""
+                                )
+                                db.record_approval_receipt(
+                                    receipt_id=receipt["id"],
+                                    mission_id=m_id,
+                                    task_id=receipt["task_id"],
+                                    task_digest=receipt["task_digest"],
+                                    source=authenticated_source,
+                                    approver=authenticated_approver,
+                                    approved_at=receipt["approved_at"],
+                                    expires_at=receipt["expires_at"],
+                                )
                             coordinator.run_deterministic(
                                 registry,
                                 db,

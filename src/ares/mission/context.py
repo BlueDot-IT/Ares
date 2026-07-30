@@ -64,7 +64,12 @@ def build_mission_context_pack(
         budgeter.add_section("Prior Memory", memory_text or "None")
 
     elif role_id == "validator":
-        candidate = [f for f in findings_list if f.get("state") in ("hypothesis", "observed")]
+        candidate = [
+            f for f in findings_list
+            if f.get("state") in (
+                "hypothesis", "observed", "hypothesized", "corroborated"
+            )
+        ]
         cand_text = "\n".join(f"- {f['id']}: {f['title']} ({f['severity']})" for f in candidate)
         budgeter.add_section("Candidate Findings", cand_text or "None")
 
@@ -74,6 +79,7 @@ def build_mission_context_pack(
         checklist = (
             "- Verify finding is not a false positive\n"
             "- Check evidence details\n"
+            "- Resolve contradictory evidence explicitly\n"
             "- Confirm confidence is >= 0.7\n"
             "- Write validator note"
         )
@@ -107,9 +113,12 @@ def build_mission_context_pack(
         )
 
     elif role_id == "analyst":
-        validated = [f for f in findings_list if f.get("state") == "validated"]
+        validated = [
+            f for f in findings_list
+            if f.get("state") in {"safely_validated", "reported"}
+        ]
         val_text = "\n".join(f"- {f['id']}: {f['title']} ({f['severity']})" for f in validated)
-        budgeter.add_section("Validated Findings", val_text or "None")
+        budgeter.add_section("Safely Validated Findings", val_text or "None")
 
         refuted = [f for f in findings_list if f.get("state") == "refuted"]
         ref_text = "\n".join(f"- {f['id']}: {f['title']} ({f['validator_note']})" for f in refuted)

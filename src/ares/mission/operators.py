@@ -14,6 +14,8 @@ class OperatorRole:
     allowed_toolsets: tuple[str, ...]
     max_risk: str
     allowed_tools: tuple[str, ...] = ()
+    minimum_evidence_items: int = 0
+    requires_approval_receipt: bool = False
 
     def allows_tool(self, tool_name: str | None) -> bool:
         return tool_name is None or not self.allowed_tools or tool_name in self.allowed_tools
@@ -73,6 +75,8 @@ OPERATORS: dict[str, OperatorRole] = {
             "searchsploit", "searchsploit_raw", "sqlmap", "sqlmap_raw",
             "commix_raw",
         ),
+        minimum_evidence_items=1,
+        requires_approval_receipt=True,
     ),
     "infiltrator": OperatorRole(
         id="infiltrator",
@@ -87,6 +91,8 @@ OPERATORS: dict[str, OperatorRole] = {
             "kerbrute_raw", "netexec_raw", "rpcclient", "rpcclient_raw",
             "smbclient", "smbclient_raw", "smbmap", "smbmap_raw",
         ),
+        minimum_evidence_items=1,
+        requires_approval_receipt=True,
     ),
     "exfiltrator": OperatorRole(
         id="exfiltrator",
@@ -99,6 +105,8 @@ OPERATORS: dict[str, OperatorRole] = {
             "mysql_enum", "smbclient", "smbclient_raw", "smbmap",
             "smbmap_raw", "sqlmap", "sqlmap_raw",
         ),
+        minimum_evidence_items=1,
+        requires_approval_receipt=True,
     ),
     "ghost": OperatorRole(
         id="ghost",
@@ -112,6 +120,8 @@ OPERATORS: dict[str, OperatorRole] = {
             "evil_winrm_raw", "impacket_psexec_raw", "impacket_wmiexec_raw",
             "netexec_raw", "rpcclient", "rpcclient_raw",
         ),
+        minimum_evidence_items=1,
+        requires_approval_receipt=True,
     ),
     "analyst": OperatorRole(
         id="analyst",

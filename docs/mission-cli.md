@@ -18,6 +18,7 @@ ares mission run \
   [--initial-tasks <tasks.json>] \
   [--ghostmcp-policy <engagement-policy.json>] \
   [--approve-high-risk] \
+  [--approval-receipts <receipts.json>] \
   [--out <markdown-report-path>] \
   [--dry-run]
 ```
@@ -35,6 +36,7 @@ Options:
 - `--initial-tasks`: Load an explicit JSON task graph. This is mandatory for the advanced profile.
 - `--ghostmcp-policy`: Use a mode-`0600` GhostMCP 1.0 engagement policy whose engagement key matches `--mission-id`.
 - `--approve-high-risk`: Give the dispatcher an explicit operator approval for exploit and post-exploitation calls. GhostMCP authorization provenance is still independently required.
+- `--approval-receipts`: Load immutable, single-use, mode-`0600` receipts. Each receipt binds an approver and expiry to the exact mission, task, role, tool, target, arguments, and supporting evidence digest.
 - `--out`: Path to write the markdown report (defaults to `~/.ares/reports/mission-report-<id>.md`).
 - `--dry-run`: Evaluate task validation and print the execution plan without executing anything.
 
@@ -58,12 +60,29 @@ ares mission run \
   --max-risk post-exploitation \
   --initial-tasks tasks.json \
   --ghostmcp-policy engagement-policy.json \
+  --approval-receipts approval-receipts.json \
   --approve-high-risk
 ```
 
 The GhostMCP policy remains the authoritative effective-argument boundary.
 Ares supplies the mission ID itself and overwrites any engagement identity
 included in task arguments.
+
+Advanced task JSON must provide `supporting_evidence_tool_call_ids` from the
+same mission. It may omit `approval_receipt_id` for the first `--dry-run`;
+the dry run prints the exact approval digest. Before execution, add the issued
+receipt ID to the task and provide a receipt file containing that digest.
+Receipts are consumed before the single dispatch attempt and cannot be reused
+or replaced. The model never selects advanced-role tasks.
+
+Evidence acquisition and advanced validation are intentionally staged. First,
+run an explicit recon-only task graph under
+`authorized-operator-validation` with a stable `--mission-id`; this does not
+require `--approve-high-risk` or a receipt file. Then reference the successful,
+non-empty, same-target tool-call evidence IDs in an advanced task, dry-run that
+exact task to obtain its digest, issue the receipt, and execute the second graph
+with the same mission ID. Failed, empty, cross-target, and cross-mission calls
+are rejected as approval evidence.
 
 ### List Missions
 ```bash

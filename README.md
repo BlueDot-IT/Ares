@@ -480,7 +480,9 @@ ares mission run \
 ```
 
 Each planning cycle, attack-surface node and relationship, coverage decision,
-tool result, and limitation is persisted for resume and report provenance.
+tool result, bounded recovery decision, finding hypothesis, and limitation is
+persisted for resume and report provenance. Version banners remain unresolved
+hypotheses unless independent safe behavioral evidence exists.
 This profile is limited to authorized passive and safe-active reconnaissance;
 it does not perform exploitation, authentication attempts, or persistence.
 

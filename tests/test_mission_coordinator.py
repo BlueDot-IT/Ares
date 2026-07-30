@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from ares.mission.coordinator import MissionCoordinator, _host_from_target
 from ares.mission.model import MissionRun, MissionScope, MissionStatus, MissionPhase
 from ares.mission.tasks import MissionTask, TaskStatus
+from ares.mission.approvals import task_approval_digest
 from ares.state.db import StateDB
 from ares.tools.registry import ToolRegistry
 
@@ -233,6 +235,7 @@ def test_imported_operator_validation_is_fail_closed():
             toolset="ghostmcp",
             target=target,
             description="Validate the authorized lateral-access boundary.",
+            supporting_evidence_tool_call_ids=[1],
         )
         valid, reason = coordinator.validate_task(allowed)
         assert valid is True, reason
@@ -326,6 +329,18 @@ def test_advanced_initial_task_uses_approval_and_preserves_tool_arguments():
                 max_risk="post-exploitation",
             ),
         )
+        db.create_mission(mission)
+        evidence_session = db.create_session(
+            prompt="evidence", target="127.0.0.1"
+        )
+        db.record_mission_operator_run(
+            mission_id=mission.id, task_id=None, role_id="recon",
+            session_id=evidence_session, status="completed",
+        )
+        evidence_id = db.record_tool_call(
+            evidence_session, tool="nmap_basic",
+            args={"target": "127.0.0.1"}, result={"open": [445]},
+        )
         task = MissionTask(
             id="t_approved",
             mission_id=mission.id,
@@ -336,6 +351,13 @@ def test_advanced_initial_task_uses_approval_and_preserves_tool_arguments():
             target="127.0.0.1",
             args={"host": "127.0.0.1"},
             description="Validate one authorized lateral-access boundary.",
+            supporting_evidence_tool_call_ids=[evidence_id],
+            approval_receipt_id="receipt-approved",
+        )
+        db.record_approval_receipt(
+            receipt_id="receipt-approved", mission_id=mission.id,
+            task_id=task.id, task_digest=task_approval_digest(task),
+            source="pytest", approver="operator", approved_at=time.time(),
         )
         MissionCoordinator(mission).run_deterministic(
             registry,
@@ -359,4 +381,4 @@ def test_advanced_initial_task_uses_approval_and_preserves_tool_arguments():
             db,
             initial_tasks=[denied_task],
         )
-        assert db.get_mission(denied_mission.id)["status"] == "failed"
+        assert db.get_mission(denied_mission.id)["status"] == "blocked"

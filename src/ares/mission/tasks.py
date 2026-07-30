@@ -28,6 +28,8 @@ class MissionTask:
     description: str
     args: dict[str, Any] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
+    supporting_evidence_tool_call_ids: list[int] = field(default_factory=list)
+    approval_receipt_id: str = ""
     status: TaskStatus = TaskStatus.PENDING
     block_reason: str = ""
 
@@ -56,6 +58,8 @@ def parse_initial_tasks(payload: Any, *, mission_id: str) -> list[MissionTask]:
         "description",
         "args",
         "depends_on",
+        "supporting_evidence_tool_call_ids",
+        "approval_receipt_id",
     }
     tasks: list[MissionTask] = []
     seen_ids: set[str] = set()
@@ -88,9 +92,16 @@ def parse_initial_tasks(payload: Any, *, mission_id: str) -> list[MissionTask]:
             raise ValueError(f"initial task {index} has an empty or duplicate id")
         args = item.get("args", {})
         depends_on = item.get("depends_on", [])
-        if not isinstance(args, dict) or not isinstance(depends_on, list):
+        evidence_ids = item.get("supporting_evidence_tool_call_ids", [])
+        if (
+            not isinstance(args, dict)
+            or not isinstance(depends_on, list)
+            or not isinstance(evidence_ids, list)
+            or any(not isinstance(value, int) for value in evidence_ids)
+        ):
             raise ValueError(
-                f"initial task {index} args must be an object and depends_on an array"
+                f"initial task {index} args must be an object; depends_on and "
+                "supporting_evidence_tool_call_ids must be arrays"
             )
         seen_ids.add(task_id)
         tasks.append(
@@ -109,6 +120,10 @@ def parse_initial_tasks(payload: Any, *, mission_id: str) -> list[MissionTask]:
                 description=str(item["description"]),
                 args=dict(args),
                 depends_on=[str(value) for value in depends_on],
+                supporting_evidence_tool_call_ids=list(evidence_ids),
+                approval_receipt_id=str(
+                    item.get("approval_receipt_id") or ""
+                ).strip(),
             )
         )
     for task in tasks:

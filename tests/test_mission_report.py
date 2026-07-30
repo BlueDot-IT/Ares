@@ -30,7 +30,7 @@ def test_mission_report_rendering():
             "id": "f1",
             "title": "API Key Exposure",
             "severity": "medium",
-            "state": "validated",
+            "state": "safely_validated",
             "affected_component": "config.py",
             "confidence": 0.85,
             "validator_note": "Found hardcoded key",
@@ -57,7 +57,7 @@ def test_mission_report_rendering():
     assert "## Coverage Ledger" in report
     assert "## Planner Provenance" in report
     assert "## Tasks" in report
-    assert "## Validated Findings" in report
+    assert "## Confirmed and Reported Findings" in report
     assert "## Refuted Findings" in report
     assert "## Evidence" in report
     assert "## Limitations" in report

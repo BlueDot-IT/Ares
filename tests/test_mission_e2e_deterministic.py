@@ -57,13 +57,13 @@ def test_e2e_deterministic_secrets_audit():
 
         db_findings = state_db.list_mission_findings("m_e2e_test")
         assert len(db_findings) == 1
-        assert db_findings[0]["state"] == "validated"
-        assert db_findings[0]["confidence"] == 0.75
-        assert db_findings[0]["validator_note"] == "Validated as scoped static evidence. Manual review still required."
+        assert db_findings[0]["state"] == "hypothesized"
+        assert db_findings[0]["confidence"] == 0.6
+        assert "independent corroboration" in db_findings[0]["validator_note"]
         assert "supersecretkey42" not in db_findings[0]["redacted"]
         assert "***REDACTED***" in db_findings[0]["redacted"]
 
         # 7. Check rendered report
         assert "# ARES Mission Report" in report
         assert "api_key =" in report and "***REDACTED***" in report
-        assert "Validated Findings" in report
+        assert "Unresolved Finding Hypotheses" in report

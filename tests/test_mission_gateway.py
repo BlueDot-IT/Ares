@@ -52,9 +52,13 @@ class MissionGatewayApiTests(unittest.TestCase):
                 mission_id="m_gw_test",
                 title="API Key",
                 severity=Severity.HIGH,
-                state=FindingState.VALIDATED,
+                state=FindingState.SAFELY_VALIDATED,
                 affected_component="src/config.py",
+                evidence_tool_call_ids=[1, 2],
+                reproduction_steps=["Repeat the bounded validation."],
                 confidence=0.8,
+                confidence_rationale="Two independent observations agree.",
+                severity_rationale="Confirmed exposure would reveal a key.",
                 validator_note="Valid",
                 recommendation="Rotate",
                 redacted="api_key = ***",
@@ -105,6 +109,7 @@ class MissionGatewayApiTests(unittest.TestCase):
                             "target": "127.0.0.1",
                             "description": "Validate one authorized boundary.",
                             "args": {"host": "127.0.0.1"},
+                            "supporting_evidence_tool_call_ids": [1],
                         }
                     ],
                 }

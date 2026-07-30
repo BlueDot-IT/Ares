@@ -13,13 +13,33 @@ def render_mission_report(
     attack_surface_edges: list[dict] | None = None,
     coverage_items: list[dict] | None = None,
     planner_cycles: list[dict] | None = None,
+    recovery_attempts: list[dict] | None = None,
 ) -> str:
     attack_surface_nodes = attack_surface_nodes or []
     attack_surface_edges = attack_surface_edges or []
     coverage_items = coverage_items or []
     planner_cycles = planner_cycles or []
+    recovery_attempts = recovery_attempts or []
     lines = []
     lines.append("# ARES Mission Report")
+    lines.append("")
+
+    lines.append("## Recovery Provenance")
+    if not recovery_attempts:
+        lines.append("No bounded recovery attempts recorded.")
+    else:
+        for attempt in recovery_attempts:
+            lines.append(
+                f"- **{attempt.get('strategy')}** for "
+                f"`{attempt.get('coverage_id')}`: {attempt.get('status')}"
+            )
+            lines.append(
+                "  Evidence tool calls: "
+                f"{attempt.get('original_tool_call_id') or '-'} → "
+                f"{attempt.get('recovery_tool_call_id') or '-'}"
+            )
+            if attempt.get("reason"):
+                lines.append(f"  Reason: {attempt.get('reason')}")
     lines.append("")
 
     # Attack surface
@@ -102,15 +122,30 @@ def render_mission_report(
     completed_tasks = [t for t in tasks if t.get("status") == "completed"]
     failed_tasks = [t for t in tasks if t.get("status") == "failed"]
     blocked_tasks = [t for t in tasks if t.get("status") == "blocked"]
-    validated_findings = [f for f in findings if f.get("state") == "validated"]
+    confirmed_findings = [
+        f for f in findings
+        if f.get("state") in {"safely_validated", "reported"}
+    ]
+    reported_findings = [
+        f for f in findings if f.get("state") == "reported"
+    ]
     refuted_findings = [f for f in findings if f.get("state") == "refuted"]
+    hypothesis_findings = [
+        f for f in findings
+        if f.get("state") in {"observed", "hypothesized", "corroborated"}
+    ]
     
     lines.append(f"Mission ID: {mission.id}")
     lines.append(f"Profile: {mission.profile_id}")
     lines.append(f"Status: {mission.status.value if hasattr(mission.status, 'value') else str(mission.status)}")
     lines.append(f"Phase: {mission.phase.value if hasattr(mission.phase, 'value') else str(mission.phase)}")
     lines.append(f"Tasks: {len(completed_tasks)} completed, {len(failed_tasks)} failed, {len(blocked_tasks)} blocked.")
-    lines.append(f"Findings: {len(validated_findings)} validated, {len(refuted_findings)} refuted.")
+    lines.append(
+        f"Findings: {len(confirmed_findings)} confirmed "
+        f"({len(reported_findings)} reported), "
+        f"{len(hypothesis_findings)} unresolved, "
+        f"{len(refuted_findings)} refuted."
+    )
     lines.append("")
     
     # Scope
@@ -131,26 +166,120 @@ def render_mission_report(
         for t in tasks:
             lines.append(f"- **{t.get('id')}** ({t.get('role_id')} / {t.get('phase')}): {t.get('description')}")
             lines.append(f"  Status: {t.get('status')}")
+            if t.get("supporting_evidence_tool_call_ids"):
+                lines.append(
+                    "  Supporting Evidence Tool Calls: "
+                    + ", ".join(
+                        str(value) for value in
+                        t["supporting_evidence_tool_call_ids"]
+                    )
+                )
+            if t.get("approval_receipt_id"):
+                lines.append(
+                    f"  Approval Receipt: {t['approval_receipt_id']}"
+                )
             if t.get("block_reason"):
                 lines.append(f"  Block Reason: {t.get('block_reason')}")
     lines.append("")
     
-    # Validated Findings
-    lines.append("## Validated Findings")
-    if not validated_findings:
-        lines.append("No validated findings.")
+    # Safely validated findings
+    lines.append("## Confirmed and Reported Findings")
+    if not confirmed_findings:
+        lines.append("No safely validated or reported findings.")
     else:
-        for f in validated_findings:
+        for f in confirmed_findings:
             lines.append(f"### {f.get('title')} ({f.get('severity')})")
             lines.append(f"- **ID**: {f.get('id')}")
+            lines.append(f"- **State**: {f.get('state')}")
             if f.get("affected_component"):
                 lines.append(f"- **Affected Component**: {f.get('affected_component')}")
             lines.append(f"- **Confidence**: {f.get('confidence')}")
+            lines.append(
+                f"- **Confidence Rationale**: "
+                f"{f.get('confidence_rationale') or '-'}"
+            )
+            lines.append(
+                f"- **Severity Rationale**: "
+                f"{f.get('severity_rationale') or '-'}"
+            )
             lines.append(f"- **Validator Note**: {f.get('validator_note')}")
+            lines.append(
+                "- **Evidence Tool Calls**: "
+                + ", ".join(
+                    str(value)
+                    for value in f.get("evidence_tool_call_ids") or []
+                )
+            )
+            if f.get("contradictory_evidence_tool_call_ids"):
+                lines.append(
+                    "- **Contradictory Evidence**: "
+                    + ", ".join(
+                        str(value) for value in
+                        f["contradictory_evidence_tool_call_ids"]
+                    )
+                )
+                lines.append(
+                    f"- **Contradiction Resolution**: "
+                    f"{f.get('contradiction_resolution') or '-'}"
+                )
             if f.get("recommendation"):
                 lines.append(f"- **Recommendation**: {f.get('recommendation')}")
             if f.get("redacted"):
                 lines.append(f"- **Evidence Preview**: `{f.get('redacted')}`")
+    lines.append("")
+
+    lines.append("## Unresolved Finding Hypotheses")
+    if not hypothesis_findings:
+        lines.append("No unresolved finding hypotheses.")
+    else:
+        for finding in hypothesis_findings:
+            lines.append(
+                f"### {finding.get('title')} ({finding.get('severity')})"
+            )
+            lines.append(f"- **State**: {finding.get('state')}")
+            lines.append(
+                f"- **Version-only**: "
+                f"{'yes' if finding.get('version_only') else 'no'}"
+            )
+            lines.append(
+                "- **Supporting Evidence**: "
+                + (
+                    ", ".join(
+                        str(value) for value in
+                        finding.get("evidence_tool_call_ids") or []
+                    )
+                    or "None"
+                )
+            )
+            lines.append(
+                "- **Contradictory Evidence**: "
+                + (
+                    ", ".join(
+                        str(value) for value in
+                        finding.get(
+                            "contradictory_evidence_tool_call_ids"
+                        ) or []
+                    )
+                    or "None"
+                )
+            )
+            if finding.get("contradiction_resolution"):
+                lines.append(
+                    f"- **Contradiction Resolution**: "
+                    f"{finding.get('contradiction_resolution')}"
+                )
+            lines.append(
+                f"- **Confidence Rationale**: "
+                f"{finding.get('confidence_rationale') or '-'}"
+            )
+            lines.append(
+                f"- **Severity Rationale**: "
+                f"{finding.get('severity_rationale') or '-'}"
+            )
+            if finding.get("redacted"):
+                lines.append(
+                    f"- **Evidence Preview**: `{finding.get('redacted')}`"
+                )
     lines.append("")
     
     # Refuted Findings
@@ -189,6 +318,16 @@ def render_mission_report(
             "Autonomous execution was limited to passive and safe-active "
             "reconnaissance; no exploitation or credential attacks were performed."
         )
+    elif mission.profile_id == "authorized-operator-validation":
+        lines.append(
+            "This mission may include active, exploit, or post-exploitation "
+            "validation explicitly authorized by its engagement policy and "
+            "approval receipts."
+        )
+        lines.append(
+            "Results remain limited to the supplied task graph, evidence "
+            "prerequisites, declared scope, and completed tool actions."
+        )
     else:
         lines.append(
             "Analysis is static and limited to the defined target scope and toolsets."
@@ -198,10 +337,25 @@ def render_mission_report(
     
     # Recommendations
     lines.append("## Recommendations")
-    if not validated_findings:
-        lines.append("No recommendations. Scope appears clean.")
+    inconclusive_coverage = [
+        item for item in coverage_items
+        if item.get("status") in {"inconclusive", "blocked", "failed"}
+    ]
+    if not confirmed_findings and (
+        hypothesis_findings or inconclusive_coverage
+    ):
+        lines.append(
+            "No remediation recommendation is finalized. Review unresolved "
+            "finding hypotheses and inconclusive coverage before drawing a "
+            "scope-level conclusion."
+        )
+    elif not confirmed_findings:
+        lines.append(
+            "No safely validated findings were recorded; this is not an "
+            "assertion that the entire scope is clean."
+        )
     else:
-        for f in validated_findings:
+        for f in confirmed_findings:
             lines.append(f"- **{f.get('title')}**: {f.get('recommendation') or 'Mitigate the issue.'}")
             
     return "\n".join(lines).strip()
