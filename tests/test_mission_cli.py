@@ -57,6 +57,7 @@ def test_mission_cli_workflow():
             assert res_run.exit_code == 0
             assert "Mission completed successfully." in res_run.stdout
             assert report_out.exists()
+            assert report_out.stat().st_mode & 0o777 == 0o600
 
             # 4. Test mission-list
             res_list = runner.invoke(app, ["mission-list"])
@@ -81,6 +82,7 @@ def test_mission_cli_workflow():
             assert res_rep.exit_code == 0
             assert report_out2.exists()
             assert "ARES Mission Report" in report_out2.read_text(encoding="utf-8")
+            assert report_out2.stat().st_mode & 0o777 == 0o600
 
             # 6. Test nested app subcommands: mission run, mission list, mission report
             report_out3 = tmp_path / "report3.md"

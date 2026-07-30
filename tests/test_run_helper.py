@@ -24,7 +24,7 @@ class RunHelperTests(unittest.TestCase):
 
         model = _FakeModel(
             [
-                ModelResponse(tool_calls=[ToolCall(name="split_targets", args={"targets": "127.0.0.1;localhost"})]),
+                ModelResponse(tool_calls=[ToolCall(name="split_targets", args={"targets": "127.0.0.1"})]),
                 ModelResponse(final_text="done"),
             ]
         )
@@ -34,7 +34,7 @@ class RunHelperTests(unittest.TestCase):
         self.assertEqual(result.final_response, "done")
         self.assertEqual(result.tool_results[0].tool, "split_targets")
         self.assertEqual(result.tool_results[0].status, "ok")
-        self.assertEqual(result.tool_results[0].result, {"targets": ["127.0.0.1", "localhost"]})
+        self.assertEqual(result.tool_results[0].result, {"targets": ["127.0.0.1"]})
         exposed_names = {tool["function"]["name"] for tool in model.calls[0]["tools"]}
         self.assertIn("split_targets", exposed_names)
         self.assertIn("Target: 127.0.0.1", model.calls[0]["messages"][0]["content"])

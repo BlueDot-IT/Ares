@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -24,6 +25,11 @@ class StateDB:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
         return conn

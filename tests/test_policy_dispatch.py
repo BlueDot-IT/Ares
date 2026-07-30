@@ -88,6 +88,64 @@ class PolicyDispatchTests(unittest.TestCase):
                     policy=PolicyContext(max_risk="active", allow_private_only=True),
                 )
 
+    def test_bounded_dispatch_covers_domain_file_and_opaque_raw_arguments(self):
+        from ares.policy.context import PolicyContext
+        from ares.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register(
+            name="bounded_tool",
+            toolset="unit",
+            risk="active",
+            schema={"name": "bounded_tool", "description": "test", "parameters": {"type": "object"}},
+            handler=lambda args, **_: {"ok": True},
+        )
+        network_policy = PolicyContext(
+            max_risk="active",
+            allowed_cidrs=(),
+            allowed_hosts=("example.local",),
+            scope_bound=True,
+        )
+
+        for args in (
+            {"domain": "other.local"},
+            {"file_path": "/etc/passwd"},
+            {"args": "--target other.local"},
+        ):
+            with self.assertRaisesRegex(PermissionError, "scope"):
+                registry.dispatch("bounded_tool", args, policy=network_policy)
+
+        result = registry.dispatch(
+            "bounded_tool",
+            {"domain": "example.local"},
+            policy=network_policy,
+        )
+        self.assertEqual(result, {"ok": True})
+
+    def test_path_bound_dispatch_rejects_network_targets(self):
+        from ares.policy.context import PolicyContext
+        from ares.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register(
+            name="bounded_tool",
+            toolset="unit",
+            risk="active",
+            schema={"name": "bounded_tool", "description": "test", "parameters": {"type": "object"}},
+            handler=lambda args, **_: {"ok": True},
+        )
+
+        with self.assertRaisesRegex(PermissionError, "scope"):
+            registry.dispatch(
+                "bounded_tool",
+                {"host": "127.0.0.1"},
+                policy=PolicyContext(
+                    max_risk="active",
+                    allowed_paths=("/tmp/scoped",),
+                    scope_bound=True,
+                ),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -44,6 +44,7 @@ class TrainingExportTests(unittest.TestCase):
 
             count = export_training_data(db, output_path, min_status="final_response")
             self.assertEqual(count, 1)
+            self.assertEqual(output_path.stat().st_mode & 0o777, 0o600)
 
             lines = output_path.read_text(encoding="utf-8").strip().split("\n")
             self.assertEqual(len(lines), 1)

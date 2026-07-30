@@ -85,9 +85,12 @@ class ProviderSelectionTests(unittest.TestCase):
             provider="gemini",
         )
 
-    def test_build_model_passes_openai_oauth_settings_to_openai_compat_adapter(self):
+    def test_build_model_routes_openai_oauth_to_codex_responses_adapter(self):
         from ares.config.loader import AppConfig, LLMConfig, PolicyConfig
-        from ares.llm.openai_compat import OpenAICompatModel
+        from ares.llm.openai_codex import (
+            OPENAI_CODEX_BASE_URL,
+            OpenAICodexResponsesModel,
+        )
         from ares.run import build_model
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -103,18 +106,16 @@ class ProviderSelectionTests(unittest.TestCase):
                 ),
                 policy=PolicyConfig(),
             )
-            with patch.object(OpenAICompatModel, "_create_client", return_value=object()) as create_client:
+            with patch.object(
+                OpenAICodexResponsesModel,
+                "_create_client",
+                return_value=object(),
+            ) as create_client:
                 model = build_model(config)
 
-        self.assertIsInstance(model, OpenAICompatModel)
-        create_client.assert_called_once_with(
-            base_url="https://api.openai.com/v1",
-            api_key=None,
-            auth_mode="oauth",
-            oauth_token_command="print-openai-token",
-            home=home,
-            provider="openai",
-        )
+        self.assertIsInstance(model, OpenAICodexResponsesModel)
+        self.assertEqual(create_client.call_args.kwargs["base_url"], OPENAI_CODEX_BASE_URL)
+        self.assertTrue(callable(create_client.call_args.kwargs["token_provider"]))
 
     def test_build_model_passes_gemini_oauth_settings_to_gemini_adapter(self):
         from ares.config.loader import AppConfig, LLMConfig, PolicyConfig

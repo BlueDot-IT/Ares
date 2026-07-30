@@ -6,14 +6,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 class GatewayV1AuthMatrixTests(unittest.TestCase):
-    def test_auth_required_only_for_exposed_mode_when_enabled(self):
+    def test_auth_required_in_every_mode_when_enabled(self):
         from ares.gateway_auth import GatewayAuthManager
 
         enabled = GatewayAuthManager(auth_enabled=True, operator_token="unit-token")
         disabled = GatewayAuthManager(auth_enabled=False, operator_token="unit-token")
 
-        self.assertFalse(enabled.auth_required(mode="loopback"))
-        self.assertFalse(enabled.auth_required(mode="lan"))
+        self.assertTrue(enabled.auth_required(mode="loopback"))
+        self.assertTrue(enabled.auth_required(mode="lan"))
         self.assertTrue(enabled.auth_required(mode="exposed"))
         self.assertFalse(disabled.auth_required(mode="exposed"))
 

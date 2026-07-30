@@ -24,9 +24,11 @@ from ares.dashboard import format_dashboard_snapshot, launch_dashboard
 from ares.engagement_memory import list_engagement_memories
 from ares.gateway import AresGateway, start_gateway_server
 from ares.llm.oauth import build_oauth_broker
+from ares.llm.openai_codex import OPENAI_CODEX_BASE_URL
 from ares.onboarding import format_onboarding_summary, run_full_onboarding, run_model_setup
 from ares.prompt_ui import Choice, select_one
 from ares.routing import AgentRouter, apply_agent_profile
+from ares.secure_files import write_private_text
 from ares.run import (
     build_doctor_snapshot,
     build_model_snapshot,
@@ -95,11 +97,18 @@ def model(
         apply_llm_profile(home=cfg.home, profile=profile)
     elif any(value is not None for value in (provider, model_name, base_url, auth_mode, oauth_token_command, oauth_project, oauth_location)) or fallback or clear_fallbacks:
         merged_fallbacks = [] if clear_fallbacks else [*cfg.llm.fallbacks, *(fallback or [])]
+        effective_base_url = base_url
+        if (
+            auth_mode == "oauth"
+            and (provider or cfg.llm.provider).strip().lower() == "openai"
+            and effective_base_url is None
+        ):
+            effective_base_url = OPENAI_CODEX_BASE_URL
         save_llm_config(
             home=cfg.home,
             provider=provider,
             model=model_name,
-            openai_base_url=base_url,
+            openai_base_url=effective_base_url,
             fallbacks=merged_fallbacks if (fallback or clear_fallbacks) else None,
             auth_mode=auth_mode,
             oauth_token_command=oauth_token_command,
@@ -380,7 +389,7 @@ def gateway_config(
     mode: str | None = typer.Option(None, "--mode", help="Persist gateway mode: loopback, lan, or exposed."),
     host: str | None = typer.Option(None, "--host", help="Persist a custom HTTP bind address."),
     port: int | None = typer.Option(None, "--port", help="Persist the HTTP bind port."),
-    auth_enabled: bool | None = typer.Option(None, "--auth-enabled/--auth-disabled", help="Require bearer auth in exposed mode."),
+    auth_enabled: bool | None = typer.Option(None, "--auth-enabled/--auth-disabled", help="Require bearer auth for protected gateway endpoints."),
     operator_token: str | None = typer.Option(None, "--operator-token", help="Persist the local operator bootstrap token."),
     allow_cidr: list[str] | None = typer.Option(None, "--allow-cidr", help="CIDR allowlist entry for gateway clients."),
 ) -> None:
@@ -679,7 +688,7 @@ def mission_run(
             out_path = Path(out)
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        out_path.write_text(report, encoding="utf-8")
+        write_private_text(out_path, report, private_parent=False)
         typer.echo(f"Report written to: {out_path.resolve()}")
         if final_status != "completed":
             raise typer.Exit(1)
@@ -773,7 +782,7 @@ def mission_report_cmd(
 
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(report, encoding="utf-8")
+    write_private_text(out_path, report, private_parent=False)
     typer.echo(f"Report written to: {out_path.resolve()}")
 
 

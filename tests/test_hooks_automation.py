@@ -61,6 +61,7 @@ class HooksAutomationTests(unittest.TestCase):
 
             self.assertEqual(result.final_response, "finished cleanly")
             self.assertTrue(report_path.exists())
+            self.assertEqual(report_path.stat().st_mode & 0o777, 0o600)
             self.assertTrue(marker_path.exists())
             self.assertEqual(marker_path.read_text(encoding="utf-8"), str(report_path))
 

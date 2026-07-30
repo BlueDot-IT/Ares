@@ -101,7 +101,7 @@ class GatewayAuthManager:
             return True
 
     def auth_required(self, *, mode: str) -> bool:
-        return self.auth_enabled and str(mode).strip().lower() == "exposed"
+        return self.auth_enabled
 
     def _issue_session(self, *, source: str) -> str:
         token = secrets.token_urlsafe(24)

@@ -14,13 +14,15 @@ from ares.agent.tool_result_indexer import should_index_tool_result, tool_result
 from ares.config.loader import AppConfig, DEFAULT_OPENAI_BASE_URL, config_file_path, infer_llm_profile, load_config, load_home_env
 from ares.engagement_memory import build_engagement_memory_context
 from ares.hooks import HookManager
-from ares.llm import AnthropicModel, GeminiModel, OpenAICompatModel, resolve_api_key, resolve_provider
+from ares.llm import AnthropicModel, GeminiModel, OpenAICodexResponsesModel, OpenAICompatModel, resolve_api_key, resolve_provider
+from ares.llm.oauth import build_openai_oauth_token_provider
 from ares.llm.failover import FailoverCandidate, FailoverModel
 from ares.policy.context import PolicyContext
 from ares.policy.roe import ROEProfileRegistry
 from ares.playbooks.registry import PlaybookRegistry
 from ares.reporting.markdown import render_session_report
 from ares.routing import AgentRouter, apply_agent_profile
+from ares.secure_files import write_private_text
 from ares.state.db import StateDB
 from ares.tools.evidence_memory import register_evidence_tools
 from ares.tools.ghostmcp_adapter import register_ghostmcp_tools
@@ -28,10 +30,21 @@ from ares.tools.onionclaw_adapter import register_onionclaw_tools
 from ares.tools.registry import ToolRegistry
 
 
-def build_policy(config: AppConfig) -> PolicyContext:
+def build_policy(config: AppConfig, *, target: str | None = None) -> PolicyContext:
+    allowed_hosts: tuple[str, ...] = ()
+    allowed_paths: tuple[str, ...] = ()
+    if target:
+        if PolicyContext.looks_like_path(target):
+            allowed_paths = (str(Path(target).expanduser().resolve(strict=False)),)
+        else:
+            allowed_hosts = (target,)
     return PolicyContext(
         max_risk=config.policy.max_risk,
         allow_private_only=config.policy.allow_private_only,
+        allowed_cidrs=tuple() if allowed_hosts else PolicyContext().allowed_cidrs,
+        allowed_hosts=allowed_hosts,
+        allowed_paths=allowed_paths,
+        scope_bound=bool(target),
     )
 
 
@@ -90,6 +103,16 @@ def _build_single_model(
             oauth_project=oauth_project,
             oauth_location=oauth_location,
             home=home,
+        )
+    if spec.name == "openai" and auth_mode == "oauth":
+        return OpenAICodexResponsesModel(
+            model=model,
+            token_provider=build_openai_oauth_token_provider(
+                oauth_token_command,
+                home=home,
+                provider=spec.name,
+            ),
+            provider=spec.name,
         )
     return OpenAICompatModel(
         model=model,
@@ -314,7 +337,11 @@ def write_session_report(state_db: StateDB, session_id: int, output_dir: str | P
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     path = output / f"session-{session_id}.md"
-    path.write_text(render_session_report(state_db, session_id), encoding="utf-8")
+    write_private_text(
+        path,
+        render_session_report(state_db, session_id),
+        private_parent=False,
+    )
     return path
 
 
@@ -346,7 +373,7 @@ def run_once(
     config = apply_agent_profile(config, resolution)
     if policy_allow_private_only is not None:
         config = replace(config, policy=replace(config.policy, allow_private_only=policy_allow_private_only))
-    policy = build_policy(config)
+    policy = build_policy(config, target=target)
     model = model or build_model(config)
     state_db = state_db or StateDB(config.home / "state.db")
     hook_manager = hook_manager or HookManager(home=config.home, auto_report_on_finish=config.hooks.auto_report_on_finish)

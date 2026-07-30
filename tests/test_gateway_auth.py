@@ -126,6 +126,70 @@ class GatewayAuthTests(unittest.TestCase):
                 server.server_close()
                 thread.join(timeout=2)
 
+    def test_lan_mode_requires_auth_when_enabled(self):
+        from ares.config.loader import AppConfig, GatewayConfig, LLMConfig, PolicyConfig
+        from ares.gateway import AresGateway, start_gateway_server
+
+        def fake_runner(**kwargs):
+            kwargs["session_started_callback"](42)
+            return types.SimpleNamespace(final_response="ok", stop_reason="final_response")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AppConfig(
+                home=Path(tmp),
+                llm=LLMConfig(model="unit-model"),
+                policy=PolicyConfig(max_risk="passive"),
+                gateway=GatewayConfig(
+                    mode="lan",
+                    host="127.0.0.1",
+                    port=0,
+                    exposure="lan-only",
+                    auth_enabled=True,
+                    operator_token="operator-secret",
+                ),
+            )
+            gateway = AresGateway(config=config, runner=fake_runner)
+            server = start_gateway_server(
+                gateway,
+                host="127.0.0.1",
+                port=0,
+                mode="lan",
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base = f"http://127.0.0.1:{server.server_address[1]}"
+                with self.assertRaises(urllib.error.HTTPError) as denied:
+                    self._json_request(
+                        base + "/api/runs",
+                        method="POST",
+                        payload={"prompt": "scan", "target": "127.0.0.1"},
+                    )
+                self.assertEqual(denied.exception.code, 401)
+
+                login = json.loads(
+                    self._json_request(
+                        base + "/api/auth/login",
+                        method="POST",
+                        payload={"operator_token": "operator-secret"},
+                    ).read().decode("utf-8")
+                )
+                created = json.loads(
+                    self._json_request(
+                        base + "/api/runs",
+                        method="POST",
+                        payload={"prompt": "scan", "target": "127.0.0.1"},
+                        headers={
+                            "Authorization": f"Bearer {login['session_token']}"
+                        },
+                    ).read().decode("utf-8")
+                )
+                self.assertTrue(created["id"])
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
     def test_gateway_allowlist_and_audit_log_cover_login_and_run_submission(self):
         from ares.config.loader import AppConfig, GatewayConfig, LLMConfig, PolicyConfig
         from ares.gateway import AresGateway, gateway_allowlist_allows_client, start_gateway_server
