@@ -58,10 +58,42 @@ jobs:
           python -m venv /tmp/ares-wheel-smoke
           . /tmp/ares-wheel-smoke/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install dist/ares-1.0.0-py3-none-any.whl
+          python -m pip install "$(find dist -maxdepth 1 -name 'ares-*.whl' -print -quit)"
           ares --version
           ares doctor
           ares dashboard --help
           ares-dashboard --help
           ares route --target 127.0.0.1 --prompt "safe local smoke test"
           ares training --out /tmp/ares-sft-smoke.jsonl --min-status final_response
+
+  windows-package-smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install built wheel and run Windows CLI smoke checks
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem dist/ares-*.whl | Select-Object -First 1
+          if (-not $wheel) { throw "Ares wheel was not built" }
+          python -m pip install $wheel.FullName
+          $env:APP_HOME = Join-Path $env:RUNNER_TEMP "ares-home"
+          ares --version
+          ares doctor
+          ares sessions
+          ares dashboard --help
+          ares tui --help
+          python -c "import curses, ares.tui"

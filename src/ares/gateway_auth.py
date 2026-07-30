@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 import secrets
 import threading
@@ -86,19 +87,27 @@ class GatewayAuthManager:
         return self._issue_session(source="operator-token")
 
     def validate_session(self, token: str | None) -> bool:
+        return self.session_provenance(token) is not None
+
+    def session_provenance(self, token: str | None) -> dict[str, str] | None:
         candidate = str(token or "").strip()
         if not candidate:
-            return False
+            return None
         with self._lock:
             now = time.time()
             self._purge_expired_locked(now=now)
             session = self._sessions.get(candidate)
             if session is None:
-                return False
+                return None
             if self._is_expired(session.created_at, ttl=self.session_ttl_seconds, now=now):
                 self._sessions.pop(candidate, None)
-                return False
-            return True
+                return None
+            return {
+                "session_id": hashlib.sha256(
+                    candidate.encode("utf-8")
+                ).hexdigest()[:16],
+                "source": session.source,
+            }
 
     def auth_required(self, *, mode: str) -> bool:
         return self.auth_enabled

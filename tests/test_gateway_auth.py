@@ -255,6 +255,130 @@ class GatewayAuthTests(unittest.TestCase):
         self.assertTrue(any(item["event"] == "run_submitted" for item in audit_lines))
         self.assertEqual(audit_mode, 0o600)
 
+    def test_dangerous_run_approval_is_denied_when_gateway_auth_is_disabled(self):
+        from ares.config.loader import AppConfig, GatewayConfig, LLMConfig, PolicyConfig
+        from ares.gateway import AresGateway, start_gateway_server
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = AppConfig(
+                home=Path(tmp),
+                llm=LLMConfig(model="unit-model"),
+                policy=PolicyConfig(max_risk="exploit"),
+                gateway=GatewayConfig(
+                    mode="loopback",
+                    host="127.0.0.1",
+                    port=0,
+                    auth_enabled=False,
+                ),
+            )
+            gateway = AresGateway(config=config, runner=lambda **_: None)
+            server = start_gateway_server(
+                gateway, host="127.0.0.1", port=0, mode="loopback"
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base = f"http://127.0.0.1:{server.server_address[1]}"
+                with self.assertRaises(urllib.error.HTTPError) as denied:
+                    self._json_request(
+                        base + "/api/runs",
+                        method="POST",
+                        payload={
+                            "prompt": "dangerous operation",
+                            "target": "127.0.0.1",
+                            "approve_dangerous": True,
+                        },
+                    )
+                body = json.loads(denied.exception.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+        self.assertEqual(denied.exception.code, 403)
+        self.assertEqual(
+            body["error"],
+            "dangerous_approval_requires_authenticated_session",
+        )
+
+    def test_dangerous_run_approval_records_non_secret_session_provenance(self):
+        from ares.config.loader import AppConfig, GatewayConfig, LLMConfig, PolicyConfig
+        from ares.gateway import AresGateway, start_gateway_server
+
+        def fake_runner(**kwargs):
+            kwargs["session_started_callback"](91)
+            return types.SimpleNamespace(
+                final_response="approved", stop_reason="final_response"
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            config = AppConfig(
+                home=home,
+                llm=LLMConfig(model="unit-model"),
+                policy=PolicyConfig(max_risk="exploit"),
+                gateway=GatewayConfig(
+                    mode="loopback",
+                    host="127.0.0.1",
+                    port=0,
+                    auth_enabled=True,
+                    operator_token="operator-secret",
+                ),
+            )
+            gateway = AresGateway(config=config, runner=fake_runner)
+            server = start_gateway_server(
+                gateway, host="127.0.0.1", port=0, mode="loopback"
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base = f"http://127.0.0.1:{server.server_address[1]}"
+                login = json.loads(
+                    self._json_request(
+                        base + "/api/auth/login",
+                        method="POST",
+                        payload={"operator_token": "operator-secret"},
+                    ).read().decode("utf-8")
+                )
+                session_token = login["session_token"]
+                created = json.loads(
+                    self._json_request(
+                        base + "/api/runs",
+                        method="POST",
+                        payload={
+                            "prompt": "authorized operation",
+                            "target": "127.0.0.1",
+                            "approve_dangerous": True,
+                        },
+                        headers={
+                            "Authorization": f"Bearer {session_token}"
+                        },
+                    ).read().decode("utf-8")
+                )
+                gateway.wait_for_run(created["id"], timeout=2)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+            audit_text = (home / "gateway-audit.jsonl").read_text(
+                encoding="utf-8"
+            )
+            events = [
+                json.loads(line)
+                for line in audit_text.splitlines()
+                if line.strip()
+            ]
+
+        submitted = next(
+            event for event in events if event["event"] == "run_submitted"
+        )
+        self.assertTrue(submitted["approve_dangerous"])
+        self.assertEqual(submitted["approval_source"], "operator-token")
+        self.assertEqual(len(submitted["approval_session_id"]), 16)
+        self.assertNotIn(session_token, audit_text)
+        self.assertEqual(created["approval_source"], "operator-token")
+
 
 if __name__ == "__main__":
     unittest.main()

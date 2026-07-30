@@ -60,6 +60,8 @@ Ares v1 uses three distinct operator surfaces:
 - Long-context mode remains opt-in through `ARES_CONTEXT_MODE=long`.
 - Raw tool excerpts remain excluded from model context unless `ARES_CONTEXT_INCLUDE_RAW=true`.
 - Gateway auth, pairing, allowlist, and access-mode behavior remain stable in CLI, browser, and API flows.
+- Dangerous gateway approvals require authenticated session provenance even when safe gateway endpoints do not require authentication.
+- Evidence recall may span prior sessions only when their target matches the current engagement target.
 - Markdown reports remain backward-compatible across patch releases.
 - Training export remains offline, explicit, redacted, and operator-triggered.
 
@@ -71,6 +73,7 @@ The following are available but not guaranteed as a patch-stable contract unless
 - exact ranking behavior for memory recall when FTS5 is available versus LIKE fallback
 - exact long-context vLLM model choice and server tuning values in `docs/long-context-vllm.md`
 - provider-specific OAuth implementation details beyond the documented CLI contract
+- model-driven mission planning; `run_agentic()` intentionally fails closed until such a planner is implemented and contained
 - OnionClaw internals outside the bounded Ares-facing adapter surface
 
 ## Unsupported legacy surfaces

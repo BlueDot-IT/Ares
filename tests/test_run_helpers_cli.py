@@ -4,10 +4,31 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from typer.testing import CliRunner
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 class RunApprovalAndHelpersTests(unittest.TestCase):
+    def test_run_command_reports_provider_failures_without_traceback(self):
+        from ares.cli import app
+
+        with patch(
+            "ares.cli.run_once",
+            side_effect=RuntimeError("provider is unavailable"),
+        ):
+            result = CliRunner().invoke(
+                app,
+                ["run", "--target", "127.0.0.1"],
+            )
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn(
+            "Run could not start or complete: provider is unavailable",
+            result.output,
+        )
+        self.assertNotIn("Traceback", result.output)
+
     def test_run_once_denies_dangerous_tool_by_default_and_allows_when_flag_set(self):
         from ares.agent.runtime import ModelResponse, ToolCall
         from ares.config.loader import AppConfig, LLMConfig, PolicyConfig

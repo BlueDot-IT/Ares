@@ -7,6 +7,9 @@ import threading
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
+
+from typer.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -169,6 +172,42 @@ class AresCliGatewayTests(unittest.TestCase):
                 thread.join(timeout=2)
 
         self.assertTrue(paired["session_token"])
+
+    def test_gateway_port_collision_is_actionable_without_traceback(self):
+        from ares.cli import app
+
+        runner = CliRunner()
+        with patch(
+            "ares.cli.start_gateway_server",
+            side_effect=OSError(98, "Address already in use"),
+        ):
+            result = runner.invoke(
+                app,
+                ["gateway", "--host", "127.0.0.1", "--port", "18791"],
+            )
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("Could not start gateway on 127.0.0.1:18791", result.output)
+        self.assertIn("Address already in use", result.output)
+        self.assertNotIn("Traceback", result.output)
+
+    def test_dashboard_port_collision_is_actionable_without_traceback(self):
+        from ares.cli import app
+
+        runner = CliRunner()
+        with patch(
+            "ares.cli.launch_dashboard",
+            side_effect=OSError(98, "Address already in use"),
+        ):
+            result = runner.invoke(
+                app,
+                ["dashboard", "--no-open", "--port", "18791"],
+            )
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("Could not start dashboard gateway", result.output)
+        self.assertIn("Address already in use", result.output)
+        self.assertNotIn("Traceback", result.output)
 
 
 if __name__ == "__main__":

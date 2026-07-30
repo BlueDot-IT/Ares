@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 from pathlib import Path
 from threading import Lock
@@ -224,10 +225,25 @@ def _schema_for_tool(name: str, tool_info: dict[str, Any]) -> dict[str, Any]:
     description = tool_info.get("description") or tool_info.get("doc") or name
     input_schema = tool_info.get("inputSchema") or tool_info.get("input_schema")
     if isinstance(input_schema, dict) and input_schema.get("type") == "object":
+        parameters = copy.deepcopy(input_schema)
+        internal_fields = {
+            "engagement_id",
+            "engagement_mode",
+            "auth_token",
+        }
+        properties = parameters.get("properties")
+        if isinstance(properties, dict):
+            for field_name in internal_fields:
+                properties.pop(field_name, None)
+        required = parameters.get("required")
+        if isinstance(required, list):
+            parameters["required"] = [
+                item for item in required if item not in internal_fields
+            ]
         return {
             "name": name,
             "description": str(description).strip() or name,
-            "parameters": dict(input_schema),
+            "parameters": parameters,
         }
     signature = tool_info.get("signature") or ""
     properties: dict[str, dict[str, str]] = {}

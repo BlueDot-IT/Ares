@@ -104,6 +104,45 @@ class GhostMCPAdapterTests(unittest.TestCase):
         self.assertEqual(parameters["properties"], {})
         self.assertEqual(parameters["required"], [])
 
+    def test_internal_engagement_fields_are_not_model_visible(self):
+        from ares.tools.ghostmcp_adapter import register_ghostmcp_tools
+        from ares.tools.registry import ToolRegistry
+
+        class _FakeRunner:
+            tools = {
+                "bounded_remote": {
+                    "name": "bounded_remote",
+                    "description": "Bounded remote validation.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "host": {"type": "string"},
+                            "engagement_id": {"type": "string"},
+                            "engagement_mode": {"type": "string"},
+                            "auth_token": {"type": "string"},
+                        },
+                        "required": [
+                            "host",
+                            "engagement_id",
+                            "engagement_mode",
+                            "auth_token",
+                        ],
+                    },
+                }
+            }
+
+            def call(self, tool, args):
+                return {"ok": True}
+
+        registry = ToolRegistry()
+        register_ghostmcp_tools(
+            registry, toolset="ghostmcp.test", runner=_FakeRunner()
+        )
+        parameters = registry.get_entry("bounded_remote").schema["parameters"]
+
+        self.assertEqual(set(parameters["properties"]), {"host"})
+        self.assertEqual(parameters["required"], ["host"])
+
     def test_manifest_controls_risk_and_engagement_arguments(self):
         from ares.tools.ghostmcp_adapter import register_ghostmcp_tools
         from ares.tools.registry import ToolRegistry

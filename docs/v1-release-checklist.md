@@ -1,6 +1,6 @@
 # Ares v1 Release Checklist
 
-This checklist is the release gate for the stable `v1.0.0` line.
+This checklist is the release gate for the stable `v1.0.1` patch.
 
 ## Phase 1: Release engineering and install hygiene
 
@@ -9,7 +9,9 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Add CI to build wheel and sdist artifacts.
 - [x] Add CI smoke checks against the built wheel.
 - [x] Add tag-triggered release artifact workflow.
-- [x] Bump package metadata and runtime version to `1.0.0`.
+- [x] Bump package metadata and runtime version to `1.0.1`.
+- [x] Verify the release tag matches package metadata.
+- [x] Publish wheel and source distribution assets to a GitHub release.
 - [x] Add the `ares-dashboard` console script beside `ares` and `ares-tui`.
 - [x] Keep editable install commands from installing Ares twice.
 - [x] Keep wheel smoke commands from matching stale wheels in `dist/`.
@@ -21,6 +23,7 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Add gateway auth matrix tests for exposed mode, bearer parsing, pairing reuse, TTL handling, failed-login windows, and CIDR allowlists.
 - [x] Keep routing and policy enforcement deterministic.
 - [x] Keep high-risk approval gates outside the model.
+- [x] Require authenticated, non-secret provenance for gateway dangerous approvals.
 - [x] Keep the gateway defined as the API/control plane, not the browser dashboard.
 
 ## Phase 3: StateDB and evidence-memory stability
@@ -30,12 +33,14 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Preserve legacy sessions and tool calls during schema initialization.
 - [x] Rebuild memory FTS state for existing `memory_chunks` rows.
 - [x] Preserve LIKE fallback behavior when FTS5 is unavailable.
+- [x] Prevent evidence-memory recall across engagement targets.
 
 ## Phase 4: CLI/TUI/dashboard onboarding and operator UX
 
 - [x] Make startup and help text consistent.
 - [x] Keep onboarding flows predictable in TTY and non-TTY use.
 - [x] Make operator-facing errors actionable.
+- [x] Handle gateway and dashboard bind collisions without tracebacks.
 - [x] Document the full supported command surface.
 - [x] Separate gateway, dashboard, and TUI as distinct operator surfaces.
 - [x] Add `ares dashboard` and `ares-dashboard` as browser-facing launchers.
@@ -49,7 +54,7 @@ This checklist is the release gate for the stable `v1.0.0` line.
 - [x] Keep README release language aligned with package metadata.
 - [x] Document the gateway/dashboard/TUI separation.
 - [x] Add `CHANGELOG.md`.
-- [x] Add `docs/releases/v1.0.0.md` release notes.
+- [x] Add `docs/releases/v1.0.1.md` release notes.
 
 ## Phase 6: Legacy removal
 
@@ -80,7 +85,7 @@ python -m compileall src/ares
 rm -rf dist build src/*.egg-info
 python -m build
 python -m pip uninstall -y ares
-python -m pip install dist/ares-1.0.0-py3-none-any.whl
+python -m pip install "$(find dist -maxdepth 1 -name 'ares-*.whl' -print -quit)"
 
 ares --version
 ares doctor
@@ -96,17 +101,11 @@ ares training --out /tmp/ares-sft-smoke.jsonl --min-status final_response
 After the final local gate passes, create the tag if it does not already exist:
 
 ```bash
-git tag -a v1.0.0 -m "Ares v1.0.0"
-git push origin v1.0.0
+git tag -a v1.0.1 -m "Ares v1.0.1"
+git push bluedot v1.0.1
 ```
 
-If `v1.0.0` was already pushed before the final gate passed, move it to the validated commit:
-
-```bash
-git tag -d v1.0.0
-git push origin :refs/tags/v1.0.0
-git tag -a v1.0.0 -m "Ares v1.0.0"
-git push origin v1.0.0
-```
-
-The tag push triggers `.github/workflows/release.yml` to build and upload release artifacts.
+Never move an existing release tag. If the tag already exists, stop and resolve
+the release identity conflict before publishing. The tag push triggers
+`.github/workflows/release.yml` to build, smoke-test, and publish the wheel and
+source distribution.

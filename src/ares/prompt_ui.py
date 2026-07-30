@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import curses
 import getpass
 import sys
 from dataclasses import dataclass
@@ -142,6 +141,13 @@ def _numbered_select_one(
 
 
 def _curses_select_one(*, prompt: str, choices: list[Choice], default: str | None) -> str:
+    try:
+        import curses
+    except ImportError as exc:
+        raise RuntimeError(
+            "curses selection is unavailable on this platform"
+        ) from exc
+
     default_index = 0
     if default:
         for index, choice in enumerate(choices):
@@ -149,7 +155,7 @@ def _curses_select_one(*, prompt: str, choices: list[Choice], default: str | Non
                 default_index = index
                 break
 
-    def _run(stdscr: curses.window) -> str:
+    def _run(stdscr: object) -> str:
         curses.curs_set(0)
         selected = default_index
         while True:

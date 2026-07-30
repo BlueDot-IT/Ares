@@ -65,11 +65,14 @@ def _token_from_broker_or_command(
     active_broker = broker or build_oauth_broker(home=home)
     if active_broker is not None:
         has_configured_flow = active_broker.describe(provider) is not None
-        entry = active_broker.get_entry(provider, allow_login=has_configured_flow)
+        entry = active_broker.get_entry(provider, allow_login=False)
         if entry is not None and not entry.is_expired(skew_seconds=0):
             return entry.access_token, entry.expires_at
         if has_configured_flow:
-            raise RuntimeError(f"No valid OAuth token is available for provider '{provider}'")
+            raise RuntimeError(
+                f"No valid OAuth token is available for provider '{provider}'. "
+                f"Run `ares auth login {provider}` interactively."
+            )
     token, expiry = run_oauth_token_command(command)
     save_oauth_token(
         home=home,

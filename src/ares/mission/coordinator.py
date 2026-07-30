@@ -547,6 +547,17 @@ class MissionCoordinator:
 
     def run_agentic(
         self,
+        **_: Any,
+    ) -> str:
+        """Fail closed until genuine model-driven mission planning exists."""
+        raise NotImplementedError(
+            "Model-driven mission execution is not implemented. "
+            "Use run_deterministic() or run_contextual_deterministic(); "
+            "both execute an operator-supplied, policy-validated task graph."
+        )
+
+    def run_contextual_deterministic(
+        self,
         *,
         config: AppConfig,
         state_db: StateDB,
@@ -557,8 +568,8 @@ class MissionCoordinator:
         from ares.run import build_registry
         registry = build_registry(config, state_db=state_db)
 
-        # For the agentic path, we run exactly like run_deterministic,
-        # but generating context pack and logging/stubbing model decisions.
+        # This deterministic path builds bounded context packs for future
+        # planning integrations but never asks a model to create or alter tasks.
         if state_db.get_mission(self.mission.id) is None:
             state_db.create_mission(self.mission)
 
@@ -571,7 +582,7 @@ class MissionCoordinator:
             state_db.record_mission_task(task)
 
         session_id = state_db.create_session(
-            prompt="Agentic mission run",
+            prompt="Contextual deterministic mission run",
             target=self.mission.scope.target,
         )
 

@@ -28,6 +28,8 @@ class GatewayRunState:
     requested_agent: str | None
     approve_dangerous: bool
     max_iterations: int
+    approval_session_id: str | None = None
+    approval_source: str | None = None
     status: str = "queued"
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
@@ -47,6 +49,8 @@ class GatewayRunState:
             "requested_agent": self.requested_agent,
             "approve_dangerous": self.approve_dangerous,
             "max_iterations": self.max_iterations,
+            "approval_session_id": self.approval_session_id,
+            "approval_source": self.approval_source,
             "status": self.status,
             "created_at": self.created_at,
             "started_at": self.started_at,
@@ -96,7 +100,12 @@ class AresGateway:
         requested_agent: str | None = None,
         approve_dangerous: bool = False,
         max_iterations: int = 20,
+        approval_provenance: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        if approve_dangerous and not approval_provenance:
+            raise PermissionError(
+                "dangerous approval requires an authenticated gateway session"
+            )
         run_id = uuid.uuid4().hex[:12]
         state = GatewayRunState(
             id=run_id,
@@ -105,6 +114,16 @@ class AresGateway:
             requested_agent=requested_agent,
             approve_dangerous=approve_dangerous,
             max_iterations=max_iterations,
+            approval_session_id=(
+                approval_provenance.get("session_id")
+                if approval_provenance
+                else None
+            ),
+            approval_source=(
+                approval_provenance.get("source")
+                if approval_provenance
+                else None
+            ),
         )
         thread = threading.Thread(target=self._execute_run, args=(state,), daemon=True)
         state.thread = thread
@@ -115,6 +134,9 @@ class AresGateway:
             run_id=run_id,
             target=target,
             requested_agent=requested_agent,
+            approve_dangerous=approve_dangerous,
+            approval_session_id=state.approval_session_id,
+            approval_source=state.approval_source,
         )
         thread.start()
         return state.to_dict()
@@ -239,6 +261,13 @@ class AresGateway:
 
     def request_is_authenticated(self, authorization_header: str | None) -> bool:
         return self.auth.validate_session(extract_bearer_token(authorization_header))
+
+    def request_auth_provenance(
+        self, authorization_header: str | None
+    ) -> dict[str, str] | None:
+        return self.auth.session_provenance(
+            extract_bearer_token(authorization_header)
+        )
 
     def _append_audit_event(self, event: str, **fields: Any) -> None:
         payload = {"event": event, "ts": time.time(), **fields}
@@ -487,6 +516,36 @@ def start_gateway_server(
                     dry_run = True
                 else:
                     dry_run = requested_dry_run
+                approval_provenance = gateway.request_auth_provenance(
+                    self.headers.get("Authorization")
+                )
+                if (
+                    approve_high_risk
+                    and not dry_run
+                    and (
+                        not gateway.auth.auth_enabled
+                        or approval_provenance is None
+                    )
+                ):
+                    gateway._append_audit_event(
+                        "dangerous_approval_denied",
+                        client_host=(
+                            self.client_address[0]
+                            if self.client_address
+                            else None
+                        ),
+                        path=parsed.path,
+                    )
+                    self._send_json(
+                        {
+                            "error": (
+                                "dangerous_approval_requires_"
+                                "authenticated_session"
+                            )
+                        },
+                        status=403,
+                    )
+                    return
 
                 import secrets
                 import threading
@@ -609,6 +668,23 @@ def start_gateway_server(
 
                     t = threading.Thread(target=run_bg, daemon=True)
                     t.start()
+                    gateway._append_audit_event(
+                        "mission_submitted",
+                        mission_id=m_id,
+                        profile_id=profile_id,
+                        target=target,
+                        approve_high_risk=approve_high_risk,
+                        approval_session_id=(
+                            approval_provenance.get("session_id")
+                            if approval_provenance
+                            else None
+                        ),
+                        approval_source=(
+                            approval_provenance.get("source")
+                            if approval_provenance
+                            else None
+                        ),
+                    )
 
                     self._send_json({
                         "mission_id": m_id,
@@ -623,12 +699,43 @@ def start_gateway_server(
                 self._send_json({"error": "not_found"}, status=404)
                 return
             payload = self._read_json_payload()
+            approve_dangerous = bool(payload.get("approve_dangerous", False))
+            approval_provenance = gateway.request_auth_provenance(
+                self.headers.get("Authorization")
+            )
+            if (
+                approve_dangerous
+                and (
+                    not gateway.auth.auth_enabled
+                    or approval_provenance is None
+                )
+            ):
+                gateway._append_audit_event(
+                    "dangerous_approval_denied",
+                    client_host=(
+                        self.client_address[0]
+                        if self.client_address
+                        else None
+                    ),
+                    path=parsed.path,
+                )
+                self._send_json(
+                    {
+                        "error": (
+                            "dangerous_approval_requires_"
+                            "authenticated_session"
+                        )
+                    },
+                    status=403,
+                )
+                return
             created = gateway.submit_run(
                 prompt=str(payload.get("prompt", "")).strip(),
                 target=payload.get("target"),
                 requested_agent=payload.get("agent"),
-                approve_dangerous=bool(payload.get("approve_dangerous", False)),
+                approve_dangerous=approve_dangerous,
                 max_iterations=int(payload.get("max_iterations", 20)),
+                approval_provenance=approval_provenance,
             )
             self._send_json(created, status=202)
 
