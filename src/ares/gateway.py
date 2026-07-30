@@ -19,6 +19,20 @@ from ares.secure_files import append_private_line
 from ares.state.db import StateDB
 
 
+def _coverage_with_subjects(
+    db: StateDB,
+    mission_id: str,
+) -> list[dict[str, Any]]:
+    nodes = {
+        node["id"]: node
+        for node in db.list_attack_surface_nodes(mission_id)
+    }
+    coverage = db.list_mission_coverage(mission_id)
+    for item in coverage:
+        item["subject"] = nodes.get(item["subject_node_id"])
+    return coverage
+
+
 
 @dataclass
 class GatewayRunState:
@@ -376,6 +390,17 @@ def start_gateway_server(
                     db = StateDB(gateway.config.home / "state.db")
                     m = db.get_mission(mission_id)
                     if m:
+                        m["attack_surface"] = {
+                            "nodes": db.list_attack_surface_nodes(mission_id),
+                            "edges": db.list_attack_surface_edges(mission_id),
+                        }
+                        m["coverage"] = _coverage_with_subjects(
+                            db,
+                            mission_id,
+                        )
+                        m["planner_cycles"] = db.list_planner_cycles(
+                            mission_id
+                        )
                         self._send_json(m)
                     else:
                         self._send_json({"error": "mission_not_found"}, status=404)
@@ -434,6 +459,17 @@ def start_gateway_server(
                         tasks=tasks,
                         findings=findings,
                         evidence_chunks=memory_chunks,
+                        attack_surface_nodes=db.list_attack_surface_nodes(
+                            mission_id
+                        ),
+                        attack_surface_edges=db.list_attack_surface_edges(
+                            mission_id
+                        ),
+                        coverage_items=_coverage_with_subjects(
+                            db,
+                            mission_id,
+                        ),
+                        planner_cycles=db.list_planner_cycles(mission_id),
                     )
                     self._send_json({"mission_id": mission_id, "report": report})
                     return

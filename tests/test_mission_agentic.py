@@ -76,22 +76,27 @@ def test_contextual_deterministic_mission_loop():
                 os.environ.pop("APP_HOME", None)
 
 
-def test_agentic_surface_fails_closed_until_model_planning_exists():
-    scope = MissionScope(target="/tmp", allowed_paths=["/tmp"])
-    mission = MissionRun(
-        id="m_agentic_not_implemented",
-        profile_id="secrets-audit",
-        scope=scope,
-        status=MissionStatus.CREATED,
-        phase=MissionPhase.PLAN,
-    )
+def test_agentic_surface_fails_closed_for_unsupported_profiles():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        config = load_config(tmp_path)
+        state_db = StateDB(tmp_path / "state.db")
+        scope = MissionScope(target=str(tmp_path), allowed_paths=[str(tmp_path)])
+        mission = MissionRun(
+            id="m_agentic_unsupported",
+            profile_id="secrets-audit",
+            scope=scope,
+            status=MissionStatus.CREATED,
+            phase=MissionPhase.PLAN,
+        )
 
-    coordinator = MissionCoordinator(mission)
+        coordinator = MissionCoordinator(mission)
 
-    try:
-        coordinator.run_agentic()
-    except NotImplementedError as exc:
-        assert "Model-driven mission execution is not implemented" in str(exc)
-        assert "run_deterministic" in str(exc)
-    else:
-        raise AssertionError("run_agentic must fail closed")
+        try:
+            coordinator.run_agentic(config=config, state_db=state_db)
+        except ValueError as exc:
+            assert "autonomous-recon profile" in str(exc)
+        else:
+            raise AssertionError(
+                "run_agentic must reject unsupported mission profiles"
+            )

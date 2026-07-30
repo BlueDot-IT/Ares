@@ -1,14 +1,32 @@
 from __future__ import annotations
 
 import tempfile
-import pytest
 from pathlib import Path
 
-from ares.mission.coordinator import MissionCoordinator
+import pytest
+
+from ares.mission.coordinator import MissionCoordinator, _host_from_target
 from ares.mission.model import MissionRun, MissionScope, MissionStatus, MissionPhase
 from ares.mission.tasks import MissionTask, TaskStatus
 from ares.state.db import StateDB
 from ares.tools.registry import ToolRegistry
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("example.test:443", "example.test"),
+        ("https://example.test/path", "example.test"),
+        ("2001:db8::1", "2001:db8::1"),
+        ("[2001:db8::1]:443", "2001:db8::1"),
+        ("https://[2001:db8::1]/", "2001:db8::1"),
+    ],
+)
+def test_host_from_target_preserves_ipv6(
+    target: str,
+    expected: str,
+) -> None:
+    assert _host_from_target(target) == expected
 
 
 def test_validation_and_seeding():

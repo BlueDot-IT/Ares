@@ -43,6 +43,25 @@ def test_mission_cli_workflow():
             assert "Planned Tasks:" in res_dry.stdout
             assert "secrets-audit" in res_dry.stdout
 
+            autonomous_dry = runner.invoke(
+                app,
+                [
+                    "mission-run",
+                    "--profile",
+                    "autonomous-recon",
+                    "--target",
+                    "127.0.0.1",
+                    "--allowed-host",
+                    "127.0.0.1",
+                    "--max-risk",
+                    "active",
+                    "--autonomous",
+                    "--dry-run",
+                ],
+            )
+            assert autonomous_dry.exit_code == 0
+            assert "Governed model planning" in autonomous_dry.stdout
+
             # 3. Test real run
             report_out = tmp_path / "report.md"
             res_run = runner.invoke(

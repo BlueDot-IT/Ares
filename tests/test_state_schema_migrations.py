@@ -69,6 +69,20 @@ class StateSchemaMigrationTests(unittest.TestCase):
             self.assertEqual(calls[0]["tool"], "legacy.tool")
             self.assertIn("duration_ms", calls[0])
             self.assertEqual(calls[0]["duration_ms"], 0)
+            with db._connection() as conn:
+                table_names = {
+                    row["name"]
+                    for row in conn.execute(
+                        """
+                        SELECT name FROM sqlite_master
+                        WHERE type = 'table'
+                        """
+                    ).fetchall()
+                }
+            self.assertIn("attack_surface_nodes", table_names)
+            self.assertIn("attack_surface_edges", table_names)
+            self.assertIn("mission_coverage", table_names)
+            self.assertIn("mission_planner_cycles", table_names)
 
             new_session_id = db.create_session(prompt="new prompt", target="127.0.0.1", agent="default", model="unit", mode="safe-active")
             call_id = db.record_tool_call(

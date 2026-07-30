@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import secrets
 from pathlib import Path
+from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -615,6 +616,9 @@ def mission_run(
     initial_tasks_file: str | None = typer.Option(None, "--initial-tasks", help="Explicit JSON task graph"),
     ghostmcp_policy_file: str | None = typer.Option(None, "--ghostmcp-policy", help="Mode-0600 GhostMCP engagement policy"),
     approve_high_risk: bool = typer.Option(False, "--approve-high-risk", help="Approve exploit/post-exploitation tasks in the supplied graph"),
+    autonomous: bool = typer.Option(False, "--autonomous", help="Use governed model planning with the autonomous-recon profile"),
+    max_tasks: int = typer.Option(20, "--max-tasks", min=1, help="Maximum autonomous tool tasks"),
+    ports: str = typer.Option("1-1000", "--ports", help="Autonomous TCP port scope, maximum 4096 ports"),
     mission_id: str | None = typer.Option(None, "--mission-id", help="Stable engagement ID; required to pre-authorize GhostMCP policy"),
     out: str | None = typer.Option(None, "--out", "-o", help="Path to write the markdown report"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate and print plan/tasks, do not execute"),
@@ -642,6 +646,7 @@ def mission_run(
         scope=scope,
         status=MissionStatus.CREATED,
         phase=MissionPhase.PLAN,
+        metadata={"port_scope": ports} if autonomous else {},
     )
 
     try:
@@ -650,9 +655,42 @@ def mission_run(
         typer.echo(f"Error initializing coordinator: {exc}")
         raise typer.Exit(1)
 
+    if autonomous:
+        from ares.autonomy.coverage import normalize_port_scope
+
+        if profile_id != "autonomous-recon":
+            raise typer.BadParameter(
+                "--autonomous requires --profile autonomous-recon"
+            )
+        if initial_tasks_file:
+            raise typer.BadParameter(
+                "--initial-tasks cannot be combined with model planning"
+            )
+        if not allowed_host:
+            raise typer.BadParameter(
+                "--autonomous requires at least one explicit --allowed-host"
+            )
+        if max_risk != "active":
+            raise typer.BadParameter(
+                "--autonomous currently requires --max-risk active"
+            )
+        try:
+            normalize_port_scope(ports)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--ports") from exc
+
     if dry_run:
         try:
             from ares.mission.tasks import load_initial_tasks
+            if autonomous:
+                typer.echo(f"Mission ID: {m_id}")
+                typer.echo(f"Profile: {profile_id}")
+                typer.echo(f"Target: {target}")
+                typer.echo(
+                    "\nGoverned model planning will select only from "
+                    "persistent coverage-ledger actions."
+                )
+                return
             tasks = (
                 load_initial_tasks(initial_tasks_file, mission_id=m_id)
                 if initial_tasks_file
@@ -688,25 +726,37 @@ def mission_run(
             raise typer.BadParameter(
                 "--ghostmcp-policy is required for authorized operator validation"
             )
-    registry = build_registry(
-        cfg,
-        ghostmcp_engagement_policy_file=ghostmcp_policy_file,
-    )
-    from ares.mission.tools import register_mission_tools
-    register_mission_tools(registry)
-
-    typer.echo(f"Starting deterministic mission {m_id}...")
-    try:
-        report = coordinator.run_deterministic(
-            registry,
-            db,
-            initial_tasks=initial_tasks,
-            approval_callback=(
-                (lambda _call, _entry: True)
-                if approve_high_risk
-                else None
-            ),
+    registry = None
+    if not autonomous:
+        registry = build_registry(
+            cfg,
+            ghostmcp_engagement_policy_file=ghostmcp_policy_file,
         )
+        from ares.mission.tools import register_mission_tools
+        register_mission_tools(registry)
+
+    typer.echo(
+        f"Starting {'autonomous' if autonomous else 'deterministic'} "
+        f"mission {m_id}..."
+    )
+    try:
+        if autonomous:
+            report = coordinator.run_agentic(
+                config=cfg,
+                state_db=db,
+                max_tasks=max_tasks,
+            )
+        else:
+            report = coordinator.run_deterministic(
+                registry,
+                db,
+                initial_tasks=initial_tasks,
+                approval_callback=(
+                    (lambda _call, _entry: True)
+                    if approve_high_risk
+                    else None
+                ),
+            )
         stored = db.get_mission(m_id)
         final_status = str(stored["status"]) if stored else "failed"
         if final_status != "completed":
@@ -812,12 +862,30 @@ def mission_report_cmd(
         tasks=tasks,
         findings=findings,
         evidence_chunks=memory_chunks,
+        attack_surface_nodes=db.list_attack_surface_nodes(mission_id),
+        attack_surface_edges=db.list_attack_surface_edges(mission_id),
+        coverage_items=_mission_coverage_with_subjects(db, mission_id),
+        planner_cycles=db.list_planner_cycles(mission_id),
     )
 
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     write_private_text(out_path, report, private_parent=False)
     typer.echo(f"Report written to: {out_path.resolve()}")
+
+
+def _mission_coverage_with_subjects(
+    db: StateDB,
+    mission_id: str,
+) -> list[dict[str, Any]]:
+    nodes = {
+        node["id"]: node
+        for node in db.list_attack_surface_nodes(mission_id)
+    }
+    coverage = db.list_mission_coverage(mission_id)
+    for item in coverage:
+        item["subject"] = nodes.get(item["subject_node_id"])
+    return coverage
 
 
 @mission_app.command("run")
@@ -832,6 +900,9 @@ def mission_run_sub(
     initial_tasks_file: str | None = typer.Option(None, "--initial-tasks", help="Explicit JSON task graph"),
     ghostmcp_policy_file: str | None = typer.Option(None, "--ghostmcp-policy", help="Mode-0600 GhostMCP engagement policy"),
     approve_high_risk: bool = typer.Option(False, "--approve-high-risk", help="Approve exploit/post-exploitation tasks in the supplied graph"),
+    autonomous: bool = typer.Option(False, "--autonomous", help="Use governed model planning with the autonomous-recon profile"),
+    max_tasks: int = typer.Option(20, "--max-tasks", min=1, help="Maximum autonomous tool tasks"),
+    ports: str = typer.Option("1-1000", "--ports", help="Autonomous TCP port scope, maximum 4096 ports"),
     mission_id: str | None = typer.Option(None, "--mission-id", help="Stable engagement ID"),
     out: str | None = typer.Option(None, "--out", "-o", help="Path to write the markdown report"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Validate and print plan/tasks, do not execute"),
@@ -848,6 +919,9 @@ def mission_run_sub(
         initial_tasks_file=initial_tasks_file,
         ghostmcp_policy_file=ghostmcp_policy_file,
         approve_high_risk=approve_high_risk,
+        autonomous=autonomous,
+        max_tasks=max_tasks,
+        ports=ports,
         mission_id=mission_id,
         out=out,
         dry_run=dry_run,

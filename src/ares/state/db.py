@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from ares.mission.model import MissionRun
     from ares.mission.tasks import MissionTask
 
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
 
 
 class StateDB:
@@ -63,6 +63,7 @@ class StateDB:
             self._ensure_services_schema(conn)
             self._ensure_memory_schema(conn)
             self._ensure_mission_schema(conn)
+            self._ensure_autonomy_schema(conn)
             self._set_schema_version(conn, STATE_SCHEMA_VERSION)
 
     def _ensure_schema_meta(self, conn: sqlite3.Connection) -> None:
@@ -322,6 +323,89 @@ class StateDB:
                 FOREIGN KEY(session_id) REFERENCES sessions(id)
             )
             """
+        )
+
+    def _ensure_autonomy_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS attack_surface_nodes (
+                id TEXT PRIMARY KEY,
+                mission_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                node_key TEXT NOT NULL,
+                label TEXT NOT NULL,
+                attributes_json TEXT NOT NULL DEFAULT '{}',
+                evidence_tool_call_ids_json TEXT NOT NULL DEFAULT '[]',
+                first_seen REAL NOT NULL,
+                last_seen REAL NOT NULL,
+                UNIQUE(mission_id, kind, node_key),
+                FOREIGN KEY(mission_id) REFERENCES missions(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS attack_surface_edges (
+                id TEXT PRIMARY KEY,
+                mission_id TEXT NOT NULL,
+                source_node_id TEXT NOT NULL,
+                target_node_id TEXT NOT NULL,
+                relationship TEXT NOT NULL,
+                attributes_json TEXT NOT NULL DEFAULT '{}',
+                evidence_tool_call_ids_json TEXT NOT NULL DEFAULT '[]',
+                first_seen REAL NOT NULL,
+                last_seen REAL NOT NULL,
+                UNIQUE(mission_id, source_node_id, target_node_id, relationship),
+                FOREIGN KEY(mission_id) REFERENCES missions(id),
+                FOREIGN KEY(source_node_id) REFERENCES attack_surface_nodes(id),
+                FOREIGN KEY(target_node_id) REFERENCES attack_surface_nodes(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mission_coverage (
+                id TEXT PRIMARY KEY,
+                mission_id TEXT NOT NULL,
+                subject_node_id TEXT NOT NULL,
+                capability TEXT NOT NULL,
+                required INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                evidence_tool_call_ids_json TEXT NOT NULL DEFAULT '[]',
+                last_error TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(mission_id, subject_node_id, capability),
+                FOREIGN KEY(mission_id) REFERENCES missions(id),
+                FOREIGN KEY(subject_node_id) REFERENCES attack_surface_nodes(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mission_planner_cycles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mission_id TEXT NOT NULL,
+                session_id INTEGER,
+                cycle INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                proposal_json TEXT NOT NULL,
+                decision_json TEXT NOT NULL,
+                UNIQUE(mission_id, cycle),
+                FOREIGN KEY(mission_id) REFERENCES missions(id),
+                FOREIGN KEY(session_id) REFERENCES sessions(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_attack_nodes_mission_kind "
+            "ON attack_surface_nodes(mission_id, kind)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_coverage_mission_status "
+            "ON mission_coverage(mission_id, status)"
         )
 
     def create_session(
@@ -787,3 +871,373 @@ class StateDB:
                 ),
             )
             return int(cur.lastrowid)
+
+    def finish_mission_operator_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        summary: str = "",
+    ) -> None:
+        with self._connection() as conn:
+            conn.execute(
+                """
+                UPDATE mission_operator_runs
+                SET finished_at = ?, status = ?, summary = ?
+                WHERE id = ?
+                """,
+                (time.time(), status, summary, int(run_id)),
+            )
+
+    def list_mission_evidence_chunks(
+        self,
+        mission_id: str,
+    ) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT mc.*
+                FROM memory_chunks AS mc
+                JOIN mission_operator_runs AS mor
+                  ON mor.session_id = mc.session_id
+                WHERE mor.mission_id = ?
+                ORDER BY mc.id
+                """,
+                (mission_id,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            value = dict(row)
+            value["tags"] = json.loads(value.pop("tags_json"))
+            results.append(value)
+        return results
+
+    def upsert_attack_surface_node(
+        self,
+        *,
+        node_id: str,
+        mission_id: str,
+        kind: str,
+        node_key: str,
+        label: str,
+        attributes: dict[str, Any] | None = None,
+        evidence_tool_call_ids: list[int] | tuple[int, ...] = (),
+    ) -> None:
+        now = time.time()
+        with self._connection() as conn:
+            existing = conn.execute(
+                """
+                SELECT attributes_json, evidence_tool_call_ids_json, first_seen
+                FROM attack_surface_nodes
+                WHERE id = ? AND mission_id = ?
+                """,
+                (node_id, mission_id),
+            ).fetchone()
+            merged_attributes = dict(attributes or {})
+            merged_evidence = {int(value) for value in evidence_tool_call_ids}
+            first_seen = now
+            if existing is not None:
+                merged_attributes = {
+                    **json.loads(existing["attributes_json"]),
+                    **merged_attributes,
+                }
+                merged_evidence.update(
+                    int(value)
+                    for value in json.loads(
+                        existing["evidence_tool_call_ids_json"]
+                    )
+                )
+                first_seen = float(existing["first_seen"])
+            conn.execute(
+                """
+                INSERT INTO attack_surface_nodes (
+                    id, mission_id, kind, node_key, label, attributes_json,
+                    evidence_tool_call_ids_json, first_seen, last_seen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    label = excluded.label,
+                    attributes_json = excluded.attributes_json,
+                    evidence_tool_call_ids_json = excluded.evidence_tool_call_ids_json,
+                    last_seen = excluded.last_seen
+                """,
+                (
+                    node_id,
+                    mission_id,
+                    kind,
+                    node_key,
+                    label,
+                    json.dumps(merged_attributes, sort_keys=True),
+                    json.dumps(sorted(merged_evidence)),
+                    first_seen,
+                    now,
+                ),
+            )
+
+    def upsert_attack_surface_edge(
+        self,
+        *,
+        edge_id: str,
+        mission_id: str,
+        source_node_id: str,
+        target_node_id: str,
+        relationship: str,
+        attributes: dict[str, Any] | None = None,
+        evidence_tool_call_ids: list[int] | tuple[int, ...] = (),
+    ) -> None:
+        now = time.time()
+        with self._connection() as conn:
+            existing = conn.execute(
+                """
+                SELECT attributes_json, evidence_tool_call_ids_json, first_seen
+                FROM attack_surface_edges
+                WHERE id = ? AND mission_id = ?
+                """,
+                (edge_id, mission_id),
+            ).fetchone()
+            merged_attributes = dict(attributes or {})
+            merged_evidence = {int(value) for value in evidence_tool_call_ids}
+            first_seen = now
+            if existing is not None:
+                merged_attributes = {
+                    **json.loads(existing["attributes_json"]),
+                    **merged_attributes,
+                }
+                merged_evidence.update(
+                    int(value)
+                    for value in json.loads(
+                        existing["evidence_tool_call_ids_json"]
+                    )
+                )
+                first_seen = float(existing["first_seen"])
+            conn.execute(
+                """
+                INSERT INTO attack_surface_edges (
+                    id, mission_id, source_node_id, target_node_id,
+                    relationship, attributes_json,
+                    evidence_tool_call_ids_json, first_seen, last_seen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    attributes_json = excluded.attributes_json,
+                    evidence_tool_call_ids_json = excluded.evidence_tool_call_ids_json,
+                    last_seen = excluded.last_seen
+                """,
+                (
+                    edge_id,
+                    mission_id,
+                    source_node_id,
+                    target_node_id,
+                    relationship,
+                    json.dumps(merged_attributes, sort_keys=True),
+                    json.dumps(sorted(merged_evidence)),
+                    first_seen,
+                    now,
+                ),
+            )
+
+    def list_attack_surface_nodes(
+        self,
+        mission_id: str,
+        *,
+        kind: str | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            if kind is None:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM attack_surface_nodes
+                    WHERE mission_id = ?
+                    ORDER BY kind, node_key
+                    """,
+                    (mission_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM attack_surface_nodes
+                    WHERE mission_id = ? AND kind = ?
+                    ORDER BY node_key
+                    """,
+                    (mission_id, kind),
+                ).fetchall()
+        results = []
+        for row in rows:
+            value = dict(row)
+            value["attributes"] = json.loads(value.pop("attributes_json"))
+            value["evidence_tool_call_ids"] = json.loads(
+                value.pop("evidence_tool_call_ids_json")
+            )
+            results.append(value)
+        return results
+
+    def list_attack_surface_edges(self, mission_id: str) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM attack_surface_edges
+                WHERE mission_id = ?
+                ORDER BY relationship, source_node_id, target_node_id
+                """,
+                (mission_id,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            value = dict(row)
+            value["attributes"] = json.loads(value.pop("attributes_json"))
+            value["evidence_tool_call_ids"] = json.loads(
+                value.pop("evidence_tool_call_ids_json")
+            )
+            results.append(value)
+        return results
+
+    def upsert_mission_coverage(
+        self,
+        *,
+        coverage_id: str,
+        mission_id: str,
+        subject_node_id: str,
+        capability: str,
+        required: bool = True,
+        status: str = "pending",
+    ) -> None:
+        now = time.time()
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO mission_coverage (
+                    id, mission_id, subject_node_id, capability, required,
+                    status, attempts, evidence_tool_call_ids_json,
+                    last_error, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, '[]', NULL, ?, ?)
+                ON CONFLICT(mission_id, subject_node_id, capability)
+                DO UPDATE SET required = MAX(mission_coverage.required, excluded.required)
+                """,
+                (
+                    coverage_id,
+                    mission_id,
+                    subject_node_id,
+                    capability,
+                    1 if required else 0,
+                    status,
+                    now,
+                    now,
+                ),
+            )
+
+    def update_mission_coverage(
+        self,
+        coverage_id: str,
+        *,
+        status: str,
+        evidence_tool_call_ids: list[int] | tuple[int, ...] = (),
+        last_error: str = "",
+        increment_attempts: bool = False,
+    ) -> None:
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT evidence_tool_call_ids_json
+                FROM mission_coverage WHERE id = ?
+                """,
+                (coverage_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown coverage item: {coverage_id}")
+            evidence = {
+                int(value)
+                for value in json.loads(row["evidence_tool_call_ids_json"])
+            }
+            evidence.update(int(value) for value in evidence_tool_call_ids)
+            conn.execute(
+                """
+                UPDATE mission_coverage
+                SET status = ?,
+                    attempts = attempts + ?,
+                    evidence_tool_call_ids_json = ?,
+                    last_error = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    status,
+                    1 if increment_attempts else 0,
+                    json.dumps(sorted(evidence)),
+                    last_error or None,
+                    time.time(),
+                    coverage_id,
+                ),
+            )
+
+    def list_mission_coverage(
+        self,
+        mission_id: str,
+        *,
+        statuses: tuple[str, ...] = (),
+    ) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            sql = (
+                "SELECT * FROM mission_coverage WHERE mission_id = ?"
+            )
+            params: list[Any] = [mission_id]
+            if statuses:
+                placeholders = ",".join("?" for _ in statuses)
+                sql += f" AND status IN ({placeholders})"
+                params.extend(statuses)
+            sql += " ORDER BY created_at, capability, subject_node_id"
+            rows = conn.execute(sql, params).fetchall()
+        results = []
+        for row in rows:
+            value = dict(row)
+            value["required"] = bool(value["required"])
+            value["evidence_tool_call_ids"] = json.loads(
+                value.pop("evidence_tool_call_ids_json")
+            )
+            results.append(value)
+        return results
+
+    def record_planner_cycle(
+        self,
+        *,
+        mission_id: str,
+        session_id: int | None,
+        cycle: int,
+        snapshot: dict[str, Any],
+        proposal: dict[str, Any],
+        decision: dict[str, Any],
+    ) -> int:
+        with self._connection() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO mission_planner_cycles (
+                    mission_id, session_id, cycle, created_at,
+                    snapshot_json, proposal_json, decision_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mission_id,
+                    session_id,
+                    int(cycle),
+                    time.time(),
+                    json.dumps(snapshot, sort_keys=True),
+                    json.dumps(proposal, sort_keys=True),
+                    json.dumps(decision, sort_keys=True),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_planner_cycles(self, mission_id: str) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM mission_planner_cycles
+                WHERE mission_id = ? ORDER BY cycle
+                """,
+                (mission_id,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            value = dict(row)
+            value["snapshot"] = json.loads(value.pop("snapshot_json"))
+            value["proposal"] = json.loads(value.pop("proposal_json"))
+            value["decision"] = json.loads(value.pop("decision_json"))
+            results.append(value)
+        return results

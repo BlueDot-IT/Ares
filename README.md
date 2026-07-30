@@ -461,6 +461,29 @@ Available subcommands:
 - `ares mission list` / `ares mission-list`
 - `ares mission report` / `ares mission-report`
 
+The experimental `autonomous-recon` profile adds a model-planned but
+deterministically governed reconnaissance loop. The model may prioritize only
+coverage actions compiled by Ares; it cannot invent tools, targets, or
+arguments. An explicit host scope, active-risk ceiling, and bounded port scope
+are required:
+
+```bash
+ares mission run \
+  --profile autonomous-recon \
+  --target 192.0.2.10 \
+  --allowed-host 192.0.2.10 \
+  --max-risk active \
+  --ports 22,80,443,8000 \
+  --max-tasks 16 \
+  --autonomous \
+  --out autonomous-recon.md
+```
+
+Each planning cycle, attack-surface node and relationship, coverage decision,
+tool result, and limitation is persisted for resume and report provenance.
+This profile is limited to authorized passive and safe-active reconnaissance;
+it does not perform exploitation, authentication attempts, or persistence.
+
 For details, see:
 - [Mission architecture](docs/mission-swarm.md)
 - [Mission CLI](docs/mission-cli.md)
