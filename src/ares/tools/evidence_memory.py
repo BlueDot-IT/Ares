@@ -190,7 +190,6 @@ def _register_evidence_get_tool_call(registry: ToolRegistry, state_db: StateDB, 
             "type": "object",
             "properties": {
                 "tool_call_id": {"type": "integer", "description": "ID of the tool call to retrieve"},
-                "session_id": {"type": "integer", "description": "Session ID (defaults to current session)"},
                 "excerpt_chars": {"type": "integer", "minimum": 200, "maximum": 20000, "default": 2000},
             },
             "required": ["tool_call_id"],

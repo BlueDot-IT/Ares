@@ -204,6 +204,14 @@ class GhostMCPToolRunner:
                         signature = str(inspect.signature(fn))
                     except Exception:
                         signature = "(…)"
+                    declared_schemas = getattr(module, "TOOL_INPUT_SCHEMAS", None)
+                    declared_schema = (
+                        declared_schemas.get(raw_name)
+                        if isinstance(declared_schemas, dict)
+                        else None
+                    )
+                    if declared_schema is None and isinstance(declared_schemas, dict):
+                        declared_schema = declared_schemas.get(name)
                     self._tools[name] = ToolSpec(
                         name=name,
                         fn=fn,
@@ -211,7 +219,11 @@ class GhostMCPToolRunner:
                         source=source,
                         raw_name=raw_name,
                         description=(inspect.getdoc(fn) or "").strip(),
-                        input_schema=_schema_for_callable(fn),
+                        input_schema=(
+                            dict(declared_schema)
+                            if isinstance(declared_schema, dict)
+                            else _schema_for_callable(fn)
+                        ),
                         security=security_by_name.get(raw_name),
                     )
 
