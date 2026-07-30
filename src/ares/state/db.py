@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from ares.mission.model import MissionRun
     from ares.mission.tasks import MissionTask
 
-STATE_SCHEMA_VERSION = 2
+STATE_SCHEMA_VERSION = 3
 
 
 class StateDB:
@@ -56,13 +56,25 @@ class StateDB:
     def _init_schema(self) -> None:
         with self._connection() as conn:
             self._ensure_schema_meta(conn)
+            row = conn.execute(
+                "SELECT value FROM ares_schema_meta "
+                "WHERE key = 'schema_version'"
+            ).fetchone()
+            try:
+                previous_schema_version = int(row["value"]) if row else 0
+            except (TypeError, ValueError):
+                previous_schema_version = 0
             self._ensure_sessions_schema(conn)
             self._ensure_tool_calls_schema(conn)
             self._ensure_messages_schema(conn)
             self._ensure_hosts_schema(conn)
             self._ensure_services_schema(conn)
             self._ensure_memory_schema(conn)
-            self._ensure_mission_schema(conn)
+            self._ensure_mission_schema(
+                conn,
+                migrate_legacy_findings=previous_schema_version
+                < STATE_SCHEMA_VERSION,
+            )
             self._ensure_autonomy_schema(conn)
             self._set_schema_version(conn, STATE_SCHEMA_VERSION)
 
@@ -75,7 +87,6 @@ class StateDB:
             )
             """
         )
-
     def _set_schema_version(self, conn: sqlite3.Connection, version: int) -> None:
         conn.execute(
             """
@@ -253,7 +264,12 @@ class StateDB:
     def _rebuild_memory_fts(self, conn: sqlite3.Connection) -> None:
         conn.execute("INSERT INTO memory_chunks_fts(memory_chunks_fts) VALUES ('rebuild')")
 
-    def _ensure_mission_schema(self, conn: sqlite3.Connection) -> None:
+    def _ensure_mission_schema(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        migrate_legacy_findings: bool,
+    ) -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS missions (
@@ -306,7 +322,53 @@ class StateDB:
             )
             """
         )
+        self._ensure_column(
+            conn, "mission_tasks", "supporting_evidence_tool_call_ids_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
+        self._ensure_column(
+            conn, "mission_tasks", "approval_receipt_id",
+            "TEXT NOT NULL DEFAULT ''",
+        )
         self._ensure_column(conn, "mission_findings", "redacted", "TEXT")
+        self._ensure_column(
+            conn, "mission_findings", "evidence_tool_call_ids_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
+        self._ensure_column(
+            conn, "mission_findings",
+            "contradictory_evidence_tool_call_ids_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
+        self._ensure_column(
+            conn, "mission_findings", "reproduction_steps_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
+        self._ensure_column(
+            conn, "mission_findings", "confidence_rationale", "TEXT",
+        )
+        self._ensure_column(
+            conn, "mission_findings", "severity_rationale", "TEXT",
+        )
+        self._ensure_column(
+            conn, "mission_findings", "contradiction_resolution",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        self._ensure_column(
+            conn, "mission_findings", "version_only",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        # Legacy "validated" rows lack the provenance required to claim safe
+        # validation. Migrate them conservatively into the unresolved
+        # lifecycle instead of grandfathering an unsupported conclusion.
+        if migrate_legacy_findings:
+            conn.execute(
+                """
+                UPDATE mission_findings
+                SET state = 'hypothesized'
+                WHERE state IN ('hypothesis', 'validated', 'reported')
+                """
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS mission_operator_runs (
@@ -396,6 +458,39 @@ class StateDB:
                 UNIQUE(mission_id, cycle),
                 FOREIGN KEY(mission_id) REFERENCES missions(id),
                 FOREIGN KEY(session_id) REFERENCES sessions(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mission_recovery_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mission_id TEXT NOT NULL,
+                coverage_id TEXT NOT NULL,
+                original_tool_call_id INTEGER,
+                recovery_tool_call_id INTEGER,
+                strategy TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason TEXT,
+                created_at REAL NOT NULL,
+                UNIQUE(mission_id, coverage_id),
+                FOREIGN KEY(mission_id) REFERENCES missions(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mission_approval_receipts (
+                id TEXT PRIMARY KEY,
+                mission_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                task_digest TEXT NOT NULL,
+                source TEXT NOT NULL,
+                approver TEXT NOT NULL,
+                approved_at REAL NOT NULL,
+                expires_at REAL,
+                used_at REAL,
+                FOREIGN KEY(mission_id) REFERENCES missions(id)
             )
             """
         )
@@ -501,6 +596,32 @@ class StateDB:
                 "SELECT * FROM tool_calls WHERE session_id = ? ORDER BY id", (session_id,)
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def mission_owns_tool_call(
+        self, mission_id: str, tool_call_id: int
+    ) -> bool:
+        return self.get_mission_tool_call(mission_id, tool_call_id) is not None
+
+    def get_mission_tool_call(
+        self, mission_id: str, tool_call_id: int
+    ) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT tc.*
+                FROM tool_calls tc
+                JOIN mission_operator_runs mor ON mor.session_id = tc.session_id
+                WHERE mor.mission_id = ? AND tc.id = ?
+                  AND tc.created_at >= mor.started_at
+                  AND (
+                    mor.finished_at IS NULL
+                    OR tc.created_at <= mor.finished_at
+                  )
+                LIMIT 1
+                """,
+                (mission_id, int(tool_call_id)),
+            ).fetchone()
+            return dict(row) if row is not None else None
 
     def list_messages(self, session_id: int) -> list[dict[str, Any]]:
         with self._connection() as conn:
@@ -761,12 +882,40 @@ class StateDB:
 
     def record_mission_task(self, task: MissionTask) -> None:
         with self._connection() as conn:
+            existing = conn.execute(
+                "SELECT mission_id FROM mission_tasks WHERE id = ?",
+                (task.id,),
+            ).fetchone()
+            if (
+                existing is not None
+                and existing["mission_id"] != task.mission_id
+            ):
+                raise ValueError(
+                    f"mission task id {task.id!r} is already owned by "
+                    f"mission {existing['mission_id']}"
+                )
             conn.execute(
                 """
-                INSERT OR REPLACE INTO mission_tasks (
+                INSERT INTO mission_tasks (
                     id, mission_id, created_at, role_id, phase, tool_name, toolset, target, description,
-                    args_json, depends_on_json, status, block_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    args_json, depends_on_json, status, block_reason,
+                    supporting_evidence_tool_call_ids_json, approval_receipt_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    role_id = excluded.role_id,
+                    phase = excluded.phase,
+                    tool_name = excluded.tool_name,
+                    toolset = excluded.toolset,
+                    target = excluded.target,
+                    description = excluded.description,
+                    args_json = excluded.args_json,
+                    depends_on_json = excluded.depends_on_json,
+                    status = excluded.status,
+                    block_reason = excluded.block_reason,
+                    supporting_evidence_tool_call_ids_json =
+                        excluded.supporting_evidence_tool_call_ids_json,
+                    approval_receipt_id = excluded.approval_receipt_id
+                WHERE mission_tasks.mission_id = excluded.mission_id
                 """,
                 (
                     task.id,
@@ -782,6 +931,8 @@ class StateDB:
                     json.dumps(task.depends_on),
                     task.status.value if hasattr(task.status, "value") else str(task.status),
                     task.block_reason,
+                    json.dumps(task.supporting_evidence_tool_call_ids),
+                    task.approval_receipt_id,
                 ),
             )
 
@@ -803,17 +954,60 @@ class StateDB:
                 res = dict(row)
                 res["args"] = json.loads(res.pop("args_json"))
                 res["depends_on"] = json.loads(res.pop("depends_on_json"))
+                res["supporting_evidence_tool_call_ids"] = json.loads(
+                    res.pop("supporting_evidence_tool_call_ids_json") or "[]"
+                )
+                res["approval_receipt_id"] = (
+                    res.get("approval_receipt_id") or ""
+                )
                 results.append(res)
             return results
 
     def record_mission_finding(self, finding: MissionFinding) -> None:
         with self._connection() as conn:
+            existing = conn.execute(
+                "SELECT mission_id FROM mission_findings WHERE id = ?",
+                (finding.id,),
+            ).fetchone()
+            if (
+                existing is not None
+                and existing["mission_id"] != finding.mission_id
+            ):
+                raise ValueError(
+                    f"mission finding id {finding.id!r} is already owned by "
+                    f"mission {existing['mission_id']}"
+                )
             conn.execute(
                 """
-                INSERT OR REPLACE INTO mission_findings (
+                INSERT INTO mission_findings (
                     id, mission_id, title, severity, state, affected_component,
-                    evidence_chunk_ids_json, confidence, validator_note, recommendation, redacted
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    evidence_chunk_ids_json, confidence, validator_note,
+                    recommendation, redacted, evidence_tool_call_ids_json,
+                    contradictory_evidence_tool_call_ids_json,
+                    reproduction_steps_json, confidence_rationale,
+                    severity_rationale, contradiction_resolution, version_only
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    severity = excluded.severity,
+                    state = excluded.state,
+                    affected_component = excluded.affected_component,
+                    evidence_chunk_ids_json = excluded.evidence_chunk_ids_json,
+                    confidence = excluded.confidence,
+                    validator_note = excluded.validator_note,
+                    recommendation = excluded.recommendation,
+                    redacted = excluded.redacted,
+                    evidence_tool_call_ids_json =
+                        excluded.evidence_tool_call_ids_json,
+                    contradictory_evidence_tool_call_ids_json =
+                        excluded.contradictory_evidence_tool_call_ids_json,
+                    reproduction_steps_json = excluded.reproduction_steps_json,
+                    confidence_rationale = excluded.confidence_rationale,
+                    severity_rationale = excluded.severity_rationale,
+                    contradiction_resolution =
+                        excluded.contradiction_resolution,
+                    version_only = excluded.version_only
+                WHERE mission_findings.mission_id = excluded.mission_id
                 """,
                 (
                     finding.id,
@@ -827,6 +1021,13 @@ class StateDB:
                     finding.validator_note,
                     finding.recommendation,
                     finding.redacted,
+                    json.dumps(finding.evidence_tool_call_ids),
+                    json.dumps(finding.contradictory_evidence_tool_call_ids),
+                    json.dumps(finding.reproduction_steps),
+                    finding.confidence_rationale,
+                    finding.severity_rationale,
+                    finding.contradiction_resolution,
+                    int(finding.version_only),
                 ),
             )
 
@@ -840,8 +1041,127 @@ class StateDB:
             for row in rows:
                 res = dict(row)
                 res["evidence_chunk_ids"] = json.loads(res.pop("evidence_chunk_ids_json"))
+                res["evidence_tool_call_ids"] = json.loads(
+                    res.pop("evidence_tool_call_ids_json") or "[]"
+                )
+                res["contradictory_evidence_tool_call_ids"] = json.loads(
+                    res.pop("contradictory_evidence_tool_call_ids_json") or "[]"
+                )
+                res["reproduction_steps"] = json.loads(
+                    res.pop("reproduction_steps_json") or "[]"
+                )
+                res["version_only"] = bool(res["version_only"])
                 results.append(res)
             return results
+
+    def record_recovery_attempt(
+        self,
+        *,
+        mission_id: str,
+        coverage_id: str,
+        original_tool_call_id: int | None,
+        recovery_tool_call_id: int | None,
+        strategy: str,
+        status: str,
+        reason: str = "",
+    ) -> int:
+        with self._connection() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO mission_recovery_attempts (
+                    mission_id, coverage_id, original_tool_call_id,
+                    recovery_tool_call_id, strategy, status, reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mission_id, coverage_id) DO NOTHING
+                """,
+                (
+                    mission_id, coverage_id, original_tool_call_id,
+                    recovery_tool_call_id, strategy, status, reason, time.time(),
+                ),
+            )
+            return int(cur.lastrowid) if cur.rowcount == 1 else 0
+
+    def update_recovery_attempt(
+        self,
+        attempt_id: int,
+        *,
+        recovery_tool_call_id: int | None,
+        status: str,
+        reason: str = "",
+    ) -> None:
+        with self._connection() as conn:
+            conn.execute(
+                """
+                UPDATE mission_recovery_attempts
+                SET recovery_tool_call_id = ?, status = ?, reason = ?
+                WHERE id = ?
+                """,
+                (
+                    recovery_tool_call_id,
+                    status,
+                    reason,
+                    int(attempt_id),
+                ),
+            )
+
+    def list_recovery_attempts(self, mission_id: str) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM mission_recovery_attempts
+                WHERE mission_id = ? ORDER BY id
+                """,
+                (mission_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def record_approval_receipt(
+        self,
+        *,
+        receipt_id: str,
+        mission_id: str,
+        task_id: str,
+        task_digest: str,
+        source: str,
+        approver: str,
+        approved_at: float,
+        expires_at: float | None = None,
+    ) -> None:
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO mission_approval_receipts (
+                    id, mission_id, task_id, task_digest, source, approver,
+                    approved_at, expires_at, used_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    receipt_id, mission_id, task_id, task_digest, source,
+                    approver, approved_at, expires_at,
+                ),
+            )
+
+    def get_approval_receipt(self, receipt_id: str) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM mission_approval_receipts WHERE id = ?",
+                (receipt_id,),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def consume_approval_receipt(self, receipt_id: str) -> bool:
+        now = time.time()
+        with self._connection() as conn:
+            cur = conn.execute(
+                """
+                UPDATE mission_approval_receipts SET used_at = ?
+                WHERE id = ?
+                  AND used_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > ?)
+                """,
+                (now, receipt_id, now),
+            )
+            return cur.rowcount == 1
 
     def record_mission_operator_run(
         self,

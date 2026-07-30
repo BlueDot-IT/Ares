@@ -33,13 +33,23 @@ def test_cannot_validate_below_confidence():
 
 
 def test_can_validate_with_all_requirements():
-    finding = MissionFinding(id="f1", mission_id="m1", title="Leak", severity=Severity.MEDIUM)
-    finding.add_evidence_chunk(42)
+    finding = MissionFinding(
+        id="f1",
+        mission_id="m1",
+        title="Leak",
+        severity=Severity.MEDIUM,
+        evidence_tool_call_ids=[41, 42],
+        reproduction_steps=["Repeat the bounded validation."],
+        confidence_rationale="Two independent observations agree.",
+        severity_rationale="Confirmed exposure has material impact.",
+    )
+    finding.hypothesize()
+    finding.corroborate()
     finding.validator_note = "Verified."
     finding.confidence = 0.7
     assert finding.can_validate() is True
     finding.validate()
-    assert finding.state == FindingState.VALIDATED
+    assert finding.state == FindingState.SAFELY_VALIDATED
 
 
 def test_cannot_report_unvalidated():

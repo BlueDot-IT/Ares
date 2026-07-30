@@ -113,10 +113,14 @@ def test_mission_state_db_crud():
             mission_id="mission_1",
             title="API Key Exposure",
             severity=Severity.HIGH,
-            state=FindingState.HYPOTHESIS,
+            state=FindingState.OBSERVED,
             affected_component="config.py",
             evidence_chunk_ids=[10, 11],
+            evidence_tool_call_ids=[20, 21],
+            reproduction_steps=["Repeat the bounded validation."],
             confidence=0.5,
+            confidence_rationale="Two independent observations agree.",
+            severity_rationale="Confirmed exposure would expose credentials.",
             validator_note="",
             recommendation="Rotate key",
         )
@@ -127,17 +131,19 @@ def test_mission_state_db_crud():
         assert len(findings) == 1
         assert findings[0]["id"] == "finding_1"
         assert findings[0]["severity"] == "high"
-        assert findings[0]["state"] == "hypothesis"
+        assert findings[0]["state"] == "observed"
         assert findings[0]["evidence_chunk_ids"] == [10, 11]
 
         # Update finding to validated in memory first and record again
         finding.validator_note = "Valid"
         finding.confidence = 0.8
+        finding.hypothesize()
+        finding.corroborate()
         finding.validate()
         db.record_mission_finding(finding)
 
         findings = db.list_mission_findings("mission_1")
-        assert findings[0]["state"] == "validated"
+        assert findings[0]["state"] == "safely_validated"
         assert findings[0]["validator_note"] == "Valid"
         assert findings[0]["confidence"] == 0.8
 

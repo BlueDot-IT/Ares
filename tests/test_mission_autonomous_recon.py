@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from ares.agent.runtime import ModelResponse
+from ares.autonomy.graph import AttackSurfaceGraph, NodeKind
 from ares.config.loader import load_config
 from ares.mission.coordinator import MissionCoordinator
 from ares.mission.model import MissionRun, MissionScope
@@ -28,6 +29,27 @@ class _FirstCoverageModel:
                         f"Advance {selected['capability']} using the governed "
                         "candidate."
                     ),
+                }
+            )
+        )
+
+
+class _CapabilityModel:
+    def __init__(self, capability: str) -> None:
+        self.capability = capability
+
+    def complete(self, messages, tools):
+        snapshot = json.loads(messages[-1]["content"].split("\n\n", 1)[1])
+        selected = next(
+            item for item in snapshot["candidate_actions"]
+            if item["capability"] == self.capability
+        )
+        return ModelResponse(
+            final_text=json.dumps(
+                {
+                    "coverage_id": selected["coverage_id"],
+                    "stop": False,
+                    "reason": "Exercise the governed candidate.",
                 }
             )
         )
@@ -233,3 +255,65 @@ def test_autonomous_recon_resumes_persistent_graph_and_coverage(
     assert len(db.list_mission_tasks(mission.id)) == 7
     assert "Status: completed" in second_report
     assert "reverse_dns" in second_report
+
+
+def test_recovery_dispatch_respects_global_tool_task_budget(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP_HOME", str(tmp_path))
+    config = load_config()
+    db = StateDB(tmp_path / "state.db")
+    mission = MissionRun(
+        id="m_recovery_budget",
+        profile_id="autonomous-recon",
+        scope=MissionScope(
+            target="127.0.0.1",
+            allowed_hosts=["127.0.0.1"],
+            max_risk="active",
+        ),
+    )
+    db.create_mission(mission)
+    graph = AttackSurfaceGraph(db, mission.id)
+    graph.upsert_node(
+        kind=NodeKind.SERVICE,
+        key="127.0.0.1:8080/tcp",
+        attributes={
+            "host_address": "127.0.0.1",
+            "port": 8080,
+            "protocol": "tcp",
+        },
+    )
+    registry = ToolRegistry()
+    calls = []
+    registry.register(
+        name="banner_grab",
+        toolset="ghostmcp",
+        risk="active",
+        schema={"type": "object"},
+        handler=lambda args, **_: (
+            calls.append(("banner_grab", args))
+            or (_ for _ in ()).throw(RuntimeError("banner failed"))
+        ),
+    )
+    registry.register(
+        name="nmap_basic",
+        toolset="ghostmcp",
+        risk="active",
+        schema={"type": "object"},
+        handler=lambda args, **_: calls.append(("nmap_basic", args)) or {},
+    )
+
+    MissionCoordinator(mission).run_agentic(
+        config=config,
+        state_db=db,
+        model=_CapabilityModel("service.fingerprint"),
+        registry=registry,
+        max_tasks=1,
+    )
+
+    assert [name for name, _args in calls] == ["banner_grab"]
+    recovery = db.list_recovery_attempts(mission.id)
+    assert len(recovery) == 1
+    assert recovery[0]["status"] == "inconclusive"
+    assert "budget was exhausted" in recovery[0]["reason"]

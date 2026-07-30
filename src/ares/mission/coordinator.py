@@ -22,6 +22,7 @@ from ares.agent.runtime import ToolCall
 from ares.policy.context import PolicyContext
 from ares.config.loader import AppConfig
 from ares.policy.risk import RISK_ORDER
+from ares.mission.approvals import ADVANCED_ROLES, task_approval_digest
 
 
 def is_forbidden_path(path: Path) -> bool:
@@ -70,7 +71,9 @@ def _host_is_allowed(target: str, allowed_hosts: list[str]) -> bool:
 
 def _task_network_targets(task: MissionTask) -> list[str]:
     targets = [task.target]
-    for key in ("target", "host", "ip", "url", "base_url"):
+    for key in (
+        "target", "host", "hostname", "domain", "ip", "url", "base_url"
+    ):
         value = task.args.get(key)
         if isinstance(value, str) and value.strip():
             targets.append(value.strip())
@@ -94,6 +97,30 @@ class MissionCoordinator:
         if self.mission.scope.target and not self.mission.scope.allowed_hosts:
             return (self.mission.scope.target,)
         return ()
+
+    def _validate_existing_mission_contract(
+        self, stored: dict[str, Any] | None
+    ) -> None:
+        if stored is None:
+            return
+        expected_scope = {
+            "target": self.mission.scope.target,
+            "allowed_paths": self.mission.scope.allowed_paths,
+            "forbidden_paths": self.mission.scope.forbidden_paths,
+            "allowed_hosts": self.mission.scope.allowed_hosts,
+            "forbidden_actions": self.mission.scope.forbidden_actions,
+            "max_risk": self.mission.scope.max_risk,
+        }
+        if (
+            stored["profile_id"] != self.mission.profile_id
+            or stored["target"] != self.mission.scope.target
+            or stored["scope"] != expected_scope
+            or stored["metadata"] != self.mission.metadata
+        ):
+            raise ValueError(
+                "existing mission id is bound to a different profile, scope, "
+                "or execution metadata"
+            )
 
     def validate_task(self, task: MissionTask) -> tuple[bool, str]:
         if task.mission_id != self.mission.id:
@@ -183,6 +210,108 @@ class MissionCoordinator:
         if not task.description or not task.description.strip():
             return False, "task description is empty"
 
+        if (
+            task.role_id in ADVANCED_ROLES
+            and len(task.supporting_evidence_tool_call_ids)
+            < operator.minimum_evidence_items
+        ):
+            return False, (
+                f"role {task.role_id} requires at least "
+                f"{operator.minimum_evidence_items} persisted evidence item"
+            )
+
+        return True, ""
+
+    def _validate_advanced_authorization(
+        self, task: MissionTask, state_db: StateDB
+    ) -> tuple[bool, str]:
+        if task.role_id not in ADVANCED_ROLES:
+            return True, ""
+        operator = get_operator(task.role_id)
+        if (
+            len(task.supporting_evidence_tool_call_ids)
+            < operator.minimum_evidence_items
+        ):
+            return False, (
+                f"role {task.role_id} requires at least "
+                f"{operator.minimum_evidence_items} persisted evidence item"
+            )
+        if not task.approval_receipt_id:
+            return False, f"role {task.role_id} requires a bound approval receipt"
+        task_hosts = {
+            _host_from_target(value)
+            for value in _task_network_targets(task)
+            if _host_from_target(value)
+        }
+        for evidence_id in task.supporting_evidence_tool_call_ids:
+            evidence = state_db.get_mission_tool_call(
+                self.mission.id, evidence_id
+            )
+            if evidence is None:
+                return False, (
+                    f"supporting evidence {evidence_id} is not bound to "
+                    f"mission {self.mission.id}"
+                )
+            if evidence["status"] != "ok":
+                return False, (
+                    f"supporting evidence {evidence_id} did not complete "
+                    "successfully"
+                )
+            try:
+                evidence_result = json.loads(evidence["result_json"] or "null")
+                evidence_args = json.loads(evidence["args_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                return False, (
+                    f"supporting evidence {evidence_id} is malformed"
+                )
+            if evidence_result in (None, {}, [], ""):
+                return False, (
+                    f"supporting evidence {evidence_id} has no observed result"
+                )
+            evidence_task = MissionTask(
+                id="evidence-target-check",
+                mission_id=self.mission.id,
+                role_id="recon",
+                phase="recon",
+                tool_name=str(evidence["tool"]),
+                toolset="ghostmcp",
+                target=str(
+                    evidence_args.get("target")
+                    or evidence_args.get("host")
+                    or evidence_args.get("hostname")
+                    or evidence_args.get("domain")
+                    or evidence_args.get("url")
+                    or ""
+                ),
+                description="evidence target check",
+                args=evidence_args,
+            )
+            evidence_hosts = {
+                _host_from_target(value)
+                for value in _task_network_targets(evidence_task)
+                if _host_from_target(value)
+            }
+            if not task_hosts.intersection(evidence_hosts):
+                return False, (
+                    f"supporting evidence {evidence_id} is not bound to "
+                    f"task target {task.target}"
+                )
+        receipt = state_db.get_approval_receipt(task.approval_receipt_id)
+        if receipt is None:
+            return False, "bound approval receipt was not persisted"
+        if receipt["mission_id"] != self.mission.id:
+            return False, "approval receipt mission mismatch"
+        if receipt["task_id"] != task.id:
+            return False, "approval receipt task mismatch"
+        if receipt["task_digest"] != task_approval_digest(task):
+            return False, "approval receipt digest mismatch"
+        if receipt["used_at"] is not None:
+            return False, "approval receipt has already been consumed"
+        if (
+            receipt["expires_at"] is not None
+            and float(receipt["expires_at"]) <= time.time()
+        ):
+            return False, "approval receipt has expired"
         return True, ""
 
     def seed_initial_tasks(self) -> list[MissionTask]:
@@ -360,7 +489,9 @@ class MissionCoordinator:
         approval_callback: Callable[[ToolCall, Any], bool] | None = None,
     ) -> str:
         # 1. Ensure mission exists in DB
-        if state_db.get_mission(self.mission.id) is None:
+        stored_mission = state_db.get_mission(self.mission.id)
+        self._validate_existing_mission_contract(stored_mission)
+        if stored_mission is None:
             state_db.create_mission(self.mission)
 
         # 2. Seed initial tasks
@@ -421,6 +552,12 @@ class MissionCoordinator:
                         description=t_dict["description"],
                         args=t_dict["args"],
                         depends_on=t_dict["depends_on"],
+                        supporting_evidence_tool_call_ids=t_dict.get(
+                            "supporting_evidence_tool_call_ids", []
+                        ),
+                        approval_receipt_id=t_dict.get(
+                            "approval_receipt_id"
+                        ) or "",
                         status=TaskStatus(t_dict["status"]),
                         block_reason=t_dict.get("block_reason") or "",
                     )
@@ -436,6 +573,26 @@ class MissionCoordinator:
                 break
 
             # Update status to RUNNING
+            authorized, authorization_reason = (
+                self._validate_advanced_authorization(
+                    runnable_task, state_db
+                )
+            )
+            if not authorized:
+                state_db.update_mission_task_status(
+                    runnable_task.id, "blocked", authorization_reason
+                )
+                continue
+            if runnable_task.role_id in ADVANCED_ROLES:
+                if not state_db.consume_approval_receipt(
+                    runnable_task.approval_receipt_id
+                ):
+                    state_db.update_mission_task_status(
+                        runnable_task.id,
+                        "blocked",
+                        "approval receipt could not be consumed",
+                    )
+                    continue
             state_db.update_mission_task_status(runnable_task.id, "running")
             state_db.record_mission_operator_run(
                 mission_id=self.mission.id,
@@ -467,10 +624,11 @@ class MissionCoordinator:
                     if runnable_task.tool_name == "redteam_secret_scan":
                         with state_db._connection() as conn:
                             row = conn.execute(
-                                "SELECT result_json FROM tool_calls WHERE session_id = ? AND tool = ? ORDER BY id DESC LIMIT 1",
+                                "SELECT id, result_json FROM tool_calls WHERE session_id = ? AND tool = ? ORDER BY id DESC LIMIT 1",
                                 (session_id, runnable_task.tool_name)
                             ).fetchone()
                         
+                        tool_call_id = int(row["id"]) if row else None
                         raw_findings = []
                         if row and row["result_json"]:
                             try:
@@ -494,15 +652,29 @@ class MissionCoordinator:
                                 mission_id=self.mission.id,
                                 title=f_dict.get("title", "Possible hardcoded secret"),
                                 severity=Severity(f_dict.get("severity", "medium")),
-                                state=FindingState.HYPOTHESIS,
+                                state=FindingState.OBSERVED,
                                 affected_component=f_dict.get("file", ""),
                                 confidence=0.0,
                                 validator_note="",
                                 recommendation=f_dict.get("recommendation", "Rotate secret immediately."),
                                 redacted=f_dict.get("redacted", ""),
+                                confidence_rationale=(
+                                    "A deterministic secret-pattern scanner "
+                                    "matched scoped source content."
+                                ),
+                                severity_rationale=(
+                                    "Scanner severity is provisional until "
+                                    "independent corroboration and review."
+                                ),
+                                reproduction_steps=[
+                                    "Re-run the scoped secret-pattern scan "
+                                    f"against {f_dict.get('file', '')}."
+                                ],
                             )
                             if evidence_chunk_id is not None:
                                 finding.add_evidence_chunk(evidence_chunk_id)
+                            if tool_call_id is not None:
+                                finding.add_evidence_tool_call(tool_call_id)
 
                             # Validate rule
                             is_forbidden = False
@@ -513,9 +685,12 @@ class MissionCoordinator:
                                     is_forbidden = True
 
                             if evidence_chunk_id is not None and not is_forbidden:
-                                finding.confidence = 0.75
-                                finding.validator_note = "Validated as scoped static evidence. Manual review still required."
-                                finding.validate()
+                                finding.confidence = 0.6
+                                finding.validator_note = (
+                                    "Observed in scoped static evidence; "
+                                    "independent corroboration is still required."
+                                )
+                                finding.hypothesize()
                             else:
                                 finding.refute("Refuted due to missing evidence or forbidden file target.")
 
@@ -529,13 +704,9 @@ class MissionCoordinator:
         # Report rendering
         final_tasks = state_db.list_mission_tasks(self.mission.id)
         final_findings = state_db.list_mission_findings(self.mission.id)
-        evidence_chunks = []
-        with state_db._connection() as conn:
-            rows = conn.execute("SELECT * FROM memory_chunks WHERE session_id = ?", (session_id,)).fetchall()
-            for r in rows:
-                c = dict(r)
-                c["tags"] = json.loads(c.pop("tags_json"))
-                evidence_chunks.append(c)
+        evidence_chunks = state_db.list_mission_evidence_chunks(
+            self.mission.id
+        )
 
         statuses = {task["status"] for task in final_tasks}
         if "failed" in statuses:
@@ -574,6 +745,8 @@ class MissionCoordinator:
         from ares.autonomy.graph import AttackSurfaceGraph, NodeKind
         from ares.autonomy.planner import MissionPlanner
         from ares.autonomy.projector import AttackSurfaceProjector
+        from ares.autonomy.recovery import ReconRecoveryPolicy
+        from ares.autonomy.findings import AutonomousFindingManager
         from ares.run import build_model, build_registry
 
         if self.mission.profile_id != "autonomous-recon":
@@ -593,7 +766,9 @@ class MissionCoordinator:
         if max_tasks < 1:
             raise ValueError("max_tasks must be at least 1")
 
-        if state_db.get_mission(self.mission.id) is None:
+        stored_mission = state_db.get_mission(self.mission.id)
+        self._validate_existing_mission_contract(stored_mission)
+        if stored_mission is None:
             state_db.create_mission(self.mission)
         state_db.update_mission_status(
             self.mission.id,
@@ -664,12 +839,25 @@ class MissionCoordinator:
             graph,
         )
         catalog = ReconCapabilityCatalog()
+        recovery = ReconRecoveryPolicy(
+            state_db=state_db,
+            mission_id=self.mission.id,
+            target_allowed=lambda value: _host_is_allowed(
+                value, self.mission.scope.allowed_hosts
+            ),
+        )
+        finding_manager = AutonomousFindingManager(
+            state_db, self.mission.id, graph
+        )
         start_cycle = (
             len(state_db.list_planner_cycles(self.mission.id)) + 1
         )
+        tool_tasks_used = 0
 
         try:
             for cycle in range(start_cycle, start_cycle + max_tasks):
+                if tool_tasks_used >= max_tasks:
+                    break
                 coverage.refresh_requirements()
                 decision = planner.plan_next(cycle=cycle)
                 if decision.stop:
@@ -716,6 +904,7 @@ class MissionCoordinator:
                     summary=decision.reason,
                 )
                 operator = get_operator(task.role_id)
+                tool_tasks_used += 1
                 result = dispatcher.dispatch(
                     ToolCall(
                         name=task.tool_name or "",
@@ -747,17 +936,133 @@ class MissionCoordinator:
                         "failed",
                         result.error,
                     )
-                    coverage.update(
-                        coverage_item["id"],
-                        status=CoverageStatus.INCONCLUSIVE,
-                        evidence_tool_call_ids=evidence_ids,
-                        last_error=result.error,
+                    decision_recovery = recovery.decide(
+                        original_task=task,
+                        coverage_item=coverage_item,
+                        original_tool_call_id=tool_call_id,
                     )
+                    recovery_attempt_id = state_db.record_recovery_attempt(
+                        mission_id=self.mission.id,
+                        coverage_id=coverage_item["id"],
+                        original_tool_call_id=tool_call_id,
+                        recovery_tool_call_id=None,
+                        strategy=decision_recovery.strategy,
+                        status="reserved",
+                        reason=decision_recovery.reason,
+                    )
+                    recovery_task = decision_recovery.task
+                    recovery_call_id = None
+                    recovery_status = "not_applicable"
+                    recovery_error = decision_recovery.reason
+                    if recovery_attempt_id == 0:
+                        recovery_task = None
+                        recovery_status = "inconclusive"
+                        recovery_error = (
+                            "bounded recovery was already reserved or attempted"
+                        )
+                    elif (
+                        recovery_task is None
+                        and decision_recovery.strategy
+                        == "preserve_http_response"
+                    ):
+                        recovery_status = "completed"
+                        recovery_error = ""
+                        coverage.update(
+                            coverage_item["id"],
+                            status=CoverageStatus.COMPLETE,
+                            evidence_tool_call_ids=evidence_ids,
+                        )
+                    elif (
+                        recovery_task is not None
+                        and tool_tasks_used >= max_tasks
+                    ):
+                        recovery_status = "inconclusive"
+                        recovery_error = (
+                            "bounded recovery was not dispatched because the "
+                            "autonomous tool-task budget was exhausted"
+                        )
+                    elif recovery_task is not None:
+                        recovery_valid, recovery_reason = self.validate_task(
+                            recovery_task
+                        )
+                        if recovery_valid:
+                            state_db.record_mission_task(recovery_task)
+                            state_db.update_mission_task_status(
+                                recovery_task.id, "running"
+                            )
+                            tool_tasks_used += 1
+                            recovery_result = dispatcher.dispatch(
+                                ToolCall(
+                                    name=recovery_task.tool_name or "",
+                                    args=dict(recovery_task.args),
+                                    required_risk="active",
+                                )
+                            )
+                            calls = state_db.list_tool_calls(session_id)
+                            recovery_call_id = (
+                                int(calls[-1]["id"]) if calls else None
+                            )
+                            if recovery_result.status == "ok":
+                                recovery_status = "completed"
+                                recovery_error = ""
+                                state_db.update_mission_task_status(
+                                    recovery_task.id, "completed"
+                                )
+                                coverage.update(
+                                    coverage_item["id"],
+                                    status=CoverageStatus.COMPLETE,
+                                    evidence_tool_call_ids=[
+                                        value for value in
+                                        (tool_call_id, recovery_call_id)
+                                        if value is not None
+                                    ],
+                                )
+                                if recovery_call_id is not None:
+                                    projector.project_tool_call(
+                                        recovery_call_id
+                                    )
+                            else:
+                                recovery_status = "inconclusive"
+                                recovery_error = recovery_result.error
+                                state_db.update_mission_task_status(
+                                    recovery_task.id,
+                                    "failed",
+                                    recovery_result.error,
+                                )
+                        else:
+                            recovery_status = "blocked"
+                            recovery_error = recovery_reason
+                    if recovery_attempt_id:
+                        state_db.update_recovery_attempt(
+                            recovery_attempt_id,
+                            recovery_tool_call_id=recovery_call_id,
+                            status=recovery_status,
+                            reason=recovery_error,
+                        )
+                    if recovery_status != "completed":
+                        coverage.update(
+                            coverage_item["id"],
+                            status=CoverageStatus.INCONCLUSIVE,
+                            evidence_tool_call_ids=[
+                                value for value in
+                                (tool_call_id, recovery_call_id)
+                                if value is not None
+                            ],
+                            last_error=recovery_error,
+                        )
                     state_db.finish_mission_operator_run(
                         operator_run_id,
-                        status="failed",
-                        summary=result.error,
+                        status=(
+                            "completed"
+                            if recovery_status == "completed" else "failed"
+                        ),
+                        summary=(
+                            decision_recovery.reason
+                            if recovery_status == "completed"
+                            else recovery_error
+                        ),
                     )
+                finding_manager.refresh()
             coverage.refresh_requirements()
         except Exception:
             self.mission.status = MissionStatus.FAILED
@@ -803,6 +1108,9 @@ class MissionCoordinator:
             attack_surface_edges=graph.edges(),
             coverage_items=coverage.items(),
             planner_cycles=state_db.list_planner_cycles(self.mission.id),
+            recovery_attempts=state_db.list_recovery_attempts(
+                self.mission.id
+            ),
         )
 
     def run_contextual_deterministic(
@@ -814,12 +1122,19 @@ class MissionCoordinator:
         initial_tasks: list[MissionTask] | None = None,
         approval_callback: Callable[[ToolCall, Any], bool] | None = None,
     ) -> str:
+        if self.mission.profile_id == "authorized-operator-validation":
+            raise ValueError(
+                "advanced roles require the receipt-enforced deterministic "
+                "mission workflow"
+            )
         from ares.run import build_registry
         registry = build_registry(config, state_db=state_db)
 
         # This deterministic path builds bounded context packs for future
         # planning integrations but never asks a model to create or alter tasks.
-        if state_db.get_mission(self.mission.id) is None:
+        stored_mission = state_db.get_mission(self.mission.id)
+        self._validate_existing_mission_contract(stored_mission)
+        if stored_mission is None:
             state_db.create_mission(self.mission)
 
         seeded_tasks = initial_tasks if initial_tasks is not None else self.seed_initial_tasks()
@@ -875,6 +1190,12 @@ class MissionCoordinator:
                         description=t_dict["description"],
                         args=t_dict["args"],
                         depends_on=t_dict["depends_on"],
+                        supporting_evidence_tool_call_ids=t_dict.get(
+                            "supporting_evidence_tool_call_ids", []
+                        ),
+                        approval_receipt_id=t_dict.get(
+                            "approval_receipt_id"
+                        ) or "",
                         status=TaskStatus(t_dict["status"]),
                         block_reason=t_dict.get("block_reason") or "",
                     )
@@ -940,10 +1261,11 @@ class MissionCoordinator:
                     if runnable_task.tool_name == "redteam_secret_scan":
                         with state_db._connection() as conn:
                             row = conn.execute(
-                                "SELECT result_json FROM tool_calls WHERE session_id = ? AND tool = ? ORDER BY id DESC LIMIT 1",
+                                "SELECT id, result_json FROM tool_calls WHERE session_id = ? AND tool = ? ORDER BY id DESC LIMIT 1",
                                 (session_id, runnable_task.tool_name)
                             ).fetchone()
                         
+                        tool_call_id = int(row["id"]) if row else None
                         raw_findings = []
                         if row and row["result_json"]:
                             try:
@@ -966,15 +1288,29 @@ class MissionCoordinator:
                                 mission_id=self.mission.id,
                                 title=f_dict.get("title", "Possible hardcoded secret"),
                                 severity=Severity(f_dict.get("severity", "medium")),
-                                state=FindingState.HYPOTHESIS,
+                                state=FindingState.OBSERVED,
                                 affected_component=f_dict.get("file", ""),
                                 confidence=0.0,
                                 validator_note="",
                                 recommendation=f_dict.get("recommendation", "Rotate secret immediately."),
                                 redacted=f_dict.get("redacted", ""),
+                                confidence_rationale=(
+                                    "A deterministic secret-pattern scanner "
+                                    "matched scoped source content."
+                                ),
+                                severity_rationale=(
+                                    "Scanner severity is provisional until "
+                                    "independent corroboration and review."
+                                ),
+                                reproduction_steps=[
+                                    "Re-run the scoped secret-pattern scan "
+                                    f"against {f_dict.get('file', '')}."
+                                ],
                             )
                             if evidence_chunk_id is not None:
                                 finding.add_evidence_chunk(evidence_chunk_id)
+                            if tool_call_id is not None:
+                                finding.add_evidence_tool_call(tool_call_id)
 
                             is_forbidden = False
                             file_path = f_dict.get("file", "")
@@ -984,9 +1320,12 @@ class MissionCoordinator:
                                     is_forbidden = True
 
                             if evidence_chunk_id is not None and not is_forbidden:
-                                finding.confidence = 0.75
-                                finding.validator_note = "Validated as scoped static evidence. Manual review still required."
-                                finding.validate()
+                                finding.confidence = 0.6
+                                finding.validator_note = (
+                                    "Observed in scoped static evidence; "
+                                    "independent corroboration is still required."
+                                )
+                                finding.hypothesize()
                             else:
                                 finding.refute("Refuted due to missing evidence or forbidden file target.")
 
@@ -998,13 +1337,9 @@ class MissionCoordinator:
 
         final_tasks = state_db.list_mission_tasks(self.mission.id)
         final_findings = state_db.list_mission_findings(self.mission.id)
-        evidence_chunks = []
-        with state_db._connection() as conn:
-            rows = conn.execute("SELECT * FROM memory_chunks WHERE session_id = ?", (session_id,)).fetchall()
-            for r in rows:
-                c = dict(r)
-                c["tags"] = json.loads(c.pop("tags_json"))
-                evidence_chunks.append(c)
+        evidence_chunks = state_db.list_mission_evidence_chunks(
+            self.mission.id
+        )
 
         statuses = {task["status"] for task in final_tasks}
         if "failed" in statuses:

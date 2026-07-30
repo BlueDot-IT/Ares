@@ -62,12 +62,12 @@ def test_contextual_deterministic_mission_loop():
 
             db_findings = state_db.list_mission_findings("m_agentic_test")
             assert len(db_findings) == 1
-            assert db_findings[0]["state"] == "validated"
+            assert db_findings[0]["state"] == "hypothesized"
 
             # 7. Check rendered report
             assert "# ARES Mission Report" in report
             assert "api_key =" in report and "***REDACTED***" in report
-            assert "Validated Findings" in report
+            assert "Unresolved Finding Hypotheses" in report
 
         finally:
             if orig_home is not None:

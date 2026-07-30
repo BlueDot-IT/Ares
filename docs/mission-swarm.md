@@ -21,7 +21,8 @@ the security control being validated:
 Adding an operator role does not automatically authorize it. A task is rejected
 unless its mission ID, phase, toolset, exact tool, target scope, and risk ceiling
 all pass validation. Exploit and post-exploitation tool dispatches additionally
-require the existing out-of-model approval callback.
+require same-mission persisted evidence, a digest-bound single-use approval
+receipt, and the existing out-of-model approval callback.
 
 GhostMCP adds an independent authorization boundary. Intrusive or sensitive
 tasks require its mode-`0600` engagement policy, expiration, explicit scope,
@@ -32,6 +33,24 @@ scope.
 Advanced tasks use the separate `authorized-operator-validation` profile. The
 ordinary source, secrets, dependency, and report profiles do not enable these
 roles or the `ghostmcp` toolset.
+
+## Findings and recovery
+
+Autonomous recon records findings through
+`observed → hypothesized → corroborated → safely_validated → reported`.
+Supporting and contradictory tool-call evidence, reproduction steps, and
+confidence/severity rationales are persisted. Product or version banners may
+create hypotheses, but can never satisfy safe validation by themselves.
+
+Failed recon capabilities use a trusted recovery catalog, not model-authored
+tools or arguments. Ares may make at most one equivalent attempt per coverage
+item (for example HTTP probe to bounded banner read, `sslscan` to certificate
+retrieval, or banner read to one-port service detection). HTTP 404 errors are
+preserved as response evidence. An SNI hostname is used only when it was
+discovered in evidence and is independently inside the declared host scope.
+Every recovery decision and both evidence IDs are persisted; failure after the
+single retry is reported as inconclusive. The recovery dispatch consumes the
+same `max_tasks` tool-execution budget as the primary attempt.
 
 ## Concepts
 - **Mission Profiles**: Pre-defined configurations containing enabled toolsets and metadata.

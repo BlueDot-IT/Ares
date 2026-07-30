@@ -616,6 +616,11 @@ def mission_run(
     initial_tasks_file: str | None = typer.Option(None, "--initial-tasks", help="Explicit JSON task graph"),
     ghostmcp_policy_file: str | None = typer.Option(None, "--ghostmcp-policy", help="Mode-0600 GhostMCP engagement policy"),
     approve_high_risk: bool = typer.Option(False, "--approve-high-risk", help="Approve exploit/post-exploitation tasks in the supplied graph"),
+    approval_receipts_file: str | None = typer.Option(
+        None,
+        "--approval-receipts",
+        help="Mode-0600 JSON approval receipts bound to advanced tasks",
+    ),
     autonomous: bool = typer.Option(False, "--autonomous", help="Use governed model planning with the autonomous-recon profile"),
     max_tasks: int = typer.Option(20, "--max-tasks", min=1, help="Maximum autonomous tool tasks"),
     ports: str = typer.Option("1-1000", "--ports", help="Autonomous TCP port scope, maximum 4096 ports"),
@@ -706,6 +711,13 @@ def mission_run(
             typer.echo("\nPlanned Tasks:")
             for t in tasks:
                 typer.echo(f"- {t.id} ({t.role_id} / {t.phase}): {t.description}")
+                if t.role_id in {
+                    "exploiter", "infiltrator", "exfiltrator", "ghost"
+                }:
+                    from ares.mission.approvals import task_approval_digest
+                    typer.echo(
+                        f"  approval_digest: {task_approval_digest(t)}"
+                    )
         except Exception as exc:
             typer.echo(f"Dry run failed: {exc}")
             raise typer.Exit(1)
@@ -718,6 +730,7 @@ def mission_run(
         else None
     )
     if profile_id == "authorized-operator-validation":
+        from ares.mission.approvals import ADVANCED_ROLES
         if initial_tasks is None:
             raise typer.BadParameter(
                 "--initial-tasks is required for authorized operator validation"
@@ -725,6 +738,49 @@ def mission_run(
         if not ghostmcp_policy_file:
             raise typer.BadParameter(
                 "--ghostmcp-policy is required for authorized operator validation"
+            )
+        advanced_tasks = [
+            task for task in initial_tasks if task.role_id in ADVANCED_ROLES
+        ]
+        if advanced_tasks and not approve_high_risk:
+            raise typer.BadParameter(
+                "--approve-high-risk is required for authorized operator "
+                "validation"
+            )
+        if advanced_tasks and not approval_receipts_file:
+            raise typer.BadParameter(
+                "--approval-receipts is required for authorized operator "
+                "validation"
+            )
+        from ares.mission.approvals import load_approval_receipts
+        receipts = (
+            load_approval_receipts(approval_receipts_file)
+            if approval_receipts_file
+            else []
+        )
+        task_ids = {task.id for task in initial_tasks}
+        receipt_ids = {receipt["id"] for receipt in receipts}
+        for task in advanced_tasks:
+            if task.approval_receipt_id not in receipt_ids:
+                raise typer.BadParameter(
+                    f"advanced task {task.id} does not reference a supplied "
+                    "approval receipt"
+                )
+        for receipt in receipts:
+            if receipt["task_id"] not in task_ids:
+                raise typer.BadParameter(
+                    f"approval receipt {receipt['id']} references an "
+                    "unknown task"
+                )
+            db.record_approval_receipt(
+                receipt_id=receipt["id"],
+                mission_id=m_id,
+                task_id=receipt["task_id"],
+                task_digest=receipt["task_digest"],
+                source=receipt["source"],
+                approver=receipt["approver"],
+                approved_at=receipt["approved_at"],
+                expires_at=receipt["expires_at"],
             )
     registry = None
     if not autonomous:
@@ -866,6 +922,7 @@ def mission_report_cmd(
         attack_surface_edges=db.list_attack_surface_edges(mission_id),
         coverage_items=_mission_coverage_with_subjects(db, mission_id),
         planner_cycles=db.list_planner_cycles(mission_id),
+        recovery_attempts=db.list_recovery_attempts(mission_id),
     )
 
     out_path = Path(out)
