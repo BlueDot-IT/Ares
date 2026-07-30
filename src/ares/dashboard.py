@@ -110,7 +110,16 @@ def main(
     mode: str | None = typer.Option(None, "--mode", help="Gateway bind preset: loopback, lan, or exposed."),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open the dashboard URL in the default browser."),
 ) -> None:
-    launch = launch_dashboard(host=host, port=port, mode=mode, open_browser=open_browser)
+    try:
+        launch = launch_dashboard(
+            host=host,
+            port=port,
+            mode=mode,
+            open_browser=open_browser,
+        )
+    except OSError as exc:
+        typer.echo(f"Could not start dashboard gateway: {exc}", err=True)
+        raise typer.Exit(1) from None
     typer.echo(format_dashboard_snapshot(launch))
     try:
         launch.server.serve_forever()

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ares"
-version = "1.0.0"
+version = "1.0.1"
 description = "Ares autonomous security testing suite for authorized engagements"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,12 +29,13 @@ dependencies = [
   "prompt_toolkit",
   "rich",
   "typer",
+  "windows-curses; sys_platform == 'win32'",
 ]
 
 [project.urls]
-Homepage = "https://github.com/jason-allen-oneal/Ares"
-Repository = "https://github.com/jason-allen-oneal/Ares"
-Issues = "https://github.com/jason-allen-oneal/Ares/issues"
+Homepage = "https://github.com/BlueDot-IT/Ares"
+Repository = "https://github.com/BlueDot-IT/Ares"
+Issues = "https://github.com/BlueDot-IT/Ares/issues"
 
 [project.optional-dependencies]
 anthropic = ["anthropic"]

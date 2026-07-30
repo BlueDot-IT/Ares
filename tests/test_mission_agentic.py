@@ -9,7 +9,7 @@ from ares.mission.model import MissionRun, MissionScope, MissionStatus, MissionP
 from ares.mission.coordinator import MissionCoordinator
 
 
-def test_mission_agentic_loop():
+def test_contextual_deterministic_mission_loop():
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir).resolve()
         
@@ -46,8 +46,10 @@ def test_mission_agentic_loop():
 
             coordinator = MissionCoordinator(mission)
 
-            # 5. Run agentic loop
-            report = coordinator.run_agentic(config=config, state_db=state_db, max_tasks=10)
+            # 5. Run the explicitly deterministic contextual loop
+            report = coordinator.run_contextual_deterministic(
+                config=config, state_db=state_db, max_tasks=10
+            )
 
             # 6. Verify database records
             db_mission = state_db.get_mission("m_agentic_test")
@@ -72,3 +74,24 @@ def test_mission_agentic_loop():
                 os.environ["APP_HOME"] = orig_home
             else:
                 os.environ.pop("APP_HOME", None)
+
+
+def test_agentic_surface_fails_closed_until_model_planning_exists():
+    scope = MissionScope(target="/tmp", allowed_paths=["/tmp"])
+    mission = MissionRun(
+        id="m_agentic_not_implemented",
+        profile_id="secrets-audit",
+        scope=scope,
+        status=MissionStatus.CREATED,
+        phase=MissionPhase.PLAN,
+    )
+
+    coordinator = MissionCoordinator(mission)
+
+    try:
+        coordinator.run_agentic()
+    except NotImplementedError as exc:
+        assert "Model-driven mission execution is not implemented" in str(exc)
+        assert "run_deterministic" in str(exc)
+    else:
+        raise AssertionError("run_agentic must fail closed")

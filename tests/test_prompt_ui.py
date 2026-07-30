@@ -1,6 +1,9 @@
+import builtins
+import importlib
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -8,6 +11,29 @@ from ares.prompt_ui import Choice, ask_text, confirm, select_one
 
 
 class PromptUITests(unittest.TestCase):
+    def test_module_import_does_not_require_curses(self):
+        import ares.prompt_ui as prompt_ui
+
+        real_import = builtins.__import__
+
+        def import_without_curses(name, *args, **kwargs):
+            if name == "curses":
+                raise ImportError("curses is unavailable")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=import_without_curses):
+            reloaded = importlib.reload(prompt_ui)
+
+        selected = reloaded.select_one(
+            "Platform-safe selection",
+            choices=[reloaded.Choice(value="safe", label="Safe")],
+            default="safe",
+            use_tty=False,
+            input_fn=lambda _: "",
+            output_fn=lambda _: None,
+        )
+        self.assertEqual(selected, "safe")
+
     def test_select_one_non_tty_accepts_numeric_choice_and_returns_internal_value(self):
         outputs: list[str] = []
         responses = iter(["2"])

@@ -6,19 +6,19 @@ on:
       - 'v*.*.*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -30,12 +30,17 @@ jobs:
       - name: Build wheel and sdist
         run: python -m build
 
+      - name: Verify tag matches package version
+        run: |
+          PACKAGE_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "v${PACKAGE_VERSION}" = "${GITHUB_REF_NAME}"
+
       - name: Smoke installed wheel
         run: |
           python -m venv /tmp/ares-release-smoke
           . /tmp/ares-release-smoke/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install dist/ares-1.0.0-py3-none-any.whl
+          python -m pip install "$(find dist -maxdepth 1 -name 'ares-*.whl' -print -quit)"
           ares --version
           ares doctor
           ares dashboard --help
@@ -48,3 +53,12 @@ jobs:
         with:
           name: ares-dist
           path: dist/*
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "Ares ${GITHUB_REF_NAME}"

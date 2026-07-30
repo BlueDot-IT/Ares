@@ -23,18 +23,44 @@ def redact_secrets(text: str) -> str:
     return result
 
 
-def _register_memory_search(registry: ToolRegistry, state_db: StateDB) -> None:
+def _register_memory_search(
+    registry: ToolRegistry,
+    state_db: StateDB,
+    current_session_id: int | None,
+) -> None:
     def handler(args: dict[str, Any], **context: Any) -> dict[str, Any]:
         query = args.get("query", "")
         if not query or not isinstance(query, str):
             return {"results": [], "error": "query parameter is required"}
-        target = args.get("target")
+        if not isinstance(current_session_id, int):
+            return {"results": [], "error": "current session is required for memory search"}
+        current_session = state_db.get_session(current_session_id)
+        if current_session is None:
+            return {"results": [], "error": "current session was not found"}
+
+        current_target = current_session.get("target")
+        requested_target = args.get("target")
+        if requested_target is not None and requested_target != current_target:
+            return {
+                "results": [],
+                "error": (
+                    f"access denied: target {requested_target!r} is outside the current "
+                    f"session target {current_target!r}"
+                ),
+            }
         limit = args.get("limit", 6)
         if not isinstance(limit, int) or limit < 1:
             limit = 6
         limit = min(limit, 20)
 
-        chunks = state_db.search_memory_chunks(query=query, target=target, limit=limit)
+        search_kwargs: dict[str, Any] = {
+            "query": query,
+            "target": current_target,
+            "limit": limit,
+        }
+        if not current_target:
+            search_kwargs["session_id"] = current_session_id
+        chunks = state_db.search_memory_chunks(**search_kwargs)
         results = []
         for chunk in chunks:
             content = chunk.get("content", "")
@@ -65,7 +91,10 @@ def _register_memory_search(registry: ToolRegistry, state_db: StateDB) -> None:
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query for memory chunks"},
-                "target": {"type": "string", "description": "Optional target filter"},
+                "target": {
+                    "type": "string",
+                    "description": "Optional target filter; must match the current session target",
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 6},
             },
             "required": ["query"],
@@ -172,5 +201,5 @@ def _register_evidence_get_tool_call(registry: ToolRegistry, state_db: StateDB, 
 
 
 def register_evidence_tools(registry: ToolRegistry, state_db: StateDB, current_session_id: int | None = None) -> None:
-    _register_memory_search(registry, state_db)
+    _register_memory_search(registry, state_db, current_session_id)
     _register_evidence_get_tool_call(registry, state_db, current_session_id)

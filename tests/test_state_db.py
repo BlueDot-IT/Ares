@@ -3,11 +3,25 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 class StateDBTests(unittest.TestCase):
+    def test_state_db_initializes_when_fchmod_is_unavailable(self):
+        from ares.state.db import StateDB
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("ares.secure_files.os.fchmod", new=None):
+                db = StateDB(Path(tmp) / "state.db")
+                session_id = db.create_session(
+                    prompt="portable",
+                    target="127.0.0.1",
+                )
+
+        self.assertEqual(session_id, 1)
+
     def test_create_session_and_record_tool_call(self):
         from ares.state.db import StateDB
 

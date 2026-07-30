@@ -42,13 +42,22 @@ from ares.run import (
 )
 from ares.state.db import StateDB
 from ares.training.export import export_training_data
-from ares.tui import launch_tui
 
 app = typer.Typer(help=f"{APP_NAME} autonomous testing suite", invoke_without_command=True)
 auth_app = typer.Typer(help="Manage cached OAuth credentials for supported model providers.")
 app.add_typer(auth_app, name="auth")
 mission_app = typer.Typer(help="Swarm testing missions")
 app.add_typer(mission_app, name="mission")
+
+
+def launch_tui(*, refresh_interval: float, yolo_mode: bool) -> None:
+    """Load the curses-dependent TUI only when an operator requests it."""
+    from ares.tui import launch_tui as launch
+
+    launch(
+        refresh_interval=refresh_interval,
+        yolo_mode=yolo_mode,
+    )
 
 
 @app.callback()
@@ -472,13 +481,17 @@ def run(
     ),
 ) -> None:
     """Run a task through the registry, policy, and runtime stack."""
-    result = run_once(
-        prompt=prompt,
-        target=target,
-        requested_agent=agent,
-        max_iterations=max_iterations,
-        approve_dangerous=approve_dangerous or yolo,
-    )
+    try:
+        result = run_once(
+            prompt=prompt,
+            target=target,
+            requested_agent=agent,
+            max_iterations=max_iterations,
+            approve_dangerous=approve_dangerous or yolo,
+        )
+    except RuntimeError as exc:
+        typer.echo(f"Run could not start or complete: {exc}", err=True)
+        raise typer.Exit(1) from None
     typer.echo(format_runtime_result(result))
 
 
@@ -495,7 +508,19 @@ def gateway(
     bind_host = host or (bind_defaults["host"] if mode is not None else cfg.gateway.host)
     bind_port = port or cfg.gateway.port
     gateway_instance = AresGateway(config=cfg)
-    server = start_gateway_server(gateway_instance, host=bind_host, port=bind_port, mode=bind_mode)
+    try:
+        server = start_gateway_server(
+            gateway_instance,
+            host=bind_host,
+            port=bind_port,
+            mode=bind_mode,
+        )
+    except OSError as exc:
+        typer.echo(
+            f"Could not start gateway on {bind_host}:{bind_port}: {exc}",
+            err=True,
+        )
+        raise typer.Exit(1) from None
     typer.echo(format_gateway_snapshot(bind_mode, bind_host, bind_port, bind_defaults["exposure"], auth_enabled=cfg.gateway.auth_enabled, allow_cidrs=cfg.gateway.allow_cidrs))
     try:
         server.serve_forever()
@@ -511,7 +536,16 @@ def dashboard(
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open the dashboard URL in the default browser."),
 ) -> None:
     """Launch the browser dashboard backed by the gateway API."""
-    launch = launch_dashboard(host=host, port=port, mode=mode, open_browser=open_browser)
+    try:
+        launch = launch_dashboard(
+            host=host,
+            port=port,
+            mode=mode,
+            open_browser=open_browser,
+        )
+    except OSError as exc:
+        typer.echo(f"Could not start dashboard gateway: {exc}", err=True)
+        raise typer.Exit(1) from None
     typer.echo(format_dashboard_snapshot(launch))
     try:
         launch.server.serve_forever()

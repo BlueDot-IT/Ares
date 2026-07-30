@@ -6,7 +6,7 @@
 
 Ares is a stable v1, operator-supervised security testing runtime for authorized engagements. It combines model-driven task execution with OpenClaw-style operator control. The model can reason and request tools, but Ares keeps scope, risk, approval, routing, persistence, evidence recall, and reporting outside the model.
 
-Release status: `1.0.0`. Treat this as a supervised operator platform for controlled assessment work, not an unattended production system.
+Release status: `1.0.1`. Treat this as a supervised operator platform for controlled assessment work, not an unattended production system.
 
 Authorized testing only. Do not use Ares against systems you do not own or do not have explicit permission to assess.
 
@@ -57,7 +57,7 @@ vendor/                     vendored GhostMCP tree when installed for local test
 ## Install
 
 ```bash
-git clone https://github.com/jason-allen-oneal/Ares.git
+git clone https://github.com/BlueDot-IT/Ares.git
 cd Ares
 git submodule update --init --recursive
 
@@ -445,7 +445,7 @@ python -m pytest tests/test_onboard_cli.py tests/test_cli_model.py tests/test_mo
 
 Ares should be treated as a supervised v1 release for authorized work. Keep human oversight in place, keep scopes explicit, and keep high-risk approvals outside the model.
 
-The `1.0.0` line is suitable for stable tagged releases, internal operator testing, and reproducible packaged builds. Do not describe this release as an unattended autonomous assessment platform.
+The `1.0.1` line is suitable for stable tagged releases, internal operator testing, and reproducible packaged builds. Do not describe this release as an unattended autonomous assessment platform.
 
 ## Experimental: Swarm Testing Missions
 

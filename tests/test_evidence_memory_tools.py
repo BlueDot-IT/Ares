@@ -76,6 +76,74 @@ class EvidenceMemoryToolsTests(unittest.TestCase):
             self.assertLessEqual(len(result["results"][0]["content_excerpt"]), 1020)
             self.assertTrue(result["results"][0]["content_excerpt"].endswith("[truncated]"))
 
+    def test_memory_search_blocks_cross_target_results_even_without_target_argument(self):
+        from ares.state.db import StateDB
+        from ares.tools.evidence_memory import register_evidence_tools
+        from ares.tools.registry import ToolRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = StateDB(Path(tmp) / "state.db")
+            alpha_session = db.create_session(
+                prompt="alpha", target="alpha.local", model="test", mode="safe-active"
+            )
+            beta_session = db.create_session(
+                prompt="beta", target="beta.local", model="test", mode="safe-active"
+            )
+            for session_id, target in (
+                (alpha_session, "alpha.local"),
+                (beta_session, "beta.local"),
+            ):
+                db.add_memory_chunk(
+                    session_id=session_id,
+                    source_type="tool_call",
+                    source_id="probe",
+                    target=target,
+                    tags=["proof"],
+                    content=f"sharedmarker evidence for {target}",
+                )
+
+            registry = ToolRegistry()
+            register_evidence_tools(registry, db, current_session_id=alpha_session)
+            entry = registry.get_entry("ares.memory.search")
+
+            result = entry.handler({"query": "sharedmarker"})
+            denied = entry.handler({"query": "sharedmarker", "target": "beta.local"})
+
+        self.assertEqual([item["target"] for item in result["results"]], ["alpha.local"])
+        self.assertIn("access denied", denied["error"].lower())
+        self.assertEqual(denied["results"], [])
+
+    def test_memory_search_allows_prior_sessions_for_the_same_target(self):
+        from ares.state.db import StateDB
+        from ares.tools.evidence_memory import register_evidence_tools
+        from ares.tools.registry import ToolRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = StateDB(Path(tmp) / "state.db")
+            prior_session = db.create_session(
+                prompt="prior", target="same.local", model="test", mode="safe-active"
+            )
+            current_session = db.create_session(
+                prompt="current", target="same.local", model="test", mode="safe-active"
+            )
+            db.add_memory_chunk(
+                session_id=prior_session,
+                source_type="tool_call",
+                source_id="probe",
+                target="same.local",
+                tags=["proof"],
+                content="historicalmarker from prior authorized work",
+            )
+
+            registry = ToolRegistry()
+            register_evidence_tools(registry, db, current_session_id=current_session)
+            result = registry.get_entry("ares.memory.search").handler(
+                {"query": "historicalmarker"}
+            )
+
+        self.assertEqual(len(result["results"]), 1)
+        self.assertEqual(result["results"][0]["session_id"], prior_session)
+
     def test_evidence_get_tool_call(self):
         from ares.state.db import StateDB
         from ares.tools.evidence_memory import register_evidence_tools

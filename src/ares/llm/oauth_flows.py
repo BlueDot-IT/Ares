@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
+import urllib.error
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -12,11 +14,11 @@ from typing import Protocol
 
 from .oauth_cache import OAuthTokenCacheEntry, clear_oauth_token, list_oauth_tokens, load_oauth_token, normalize_oauth_provider_key, save_oauth_token
 
-OPENAI_OAUTH_AUTH_ENDPOINT = "https://auth.openai.com/authorize"
-OPENAI_OAUTH_TOKEN_ENDPOINT = "https://auth0.openai.com/oauth/token"
-OPENAI_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaX197iZdX"
-OPENAI_OAUTH_REDIRECT_URI = "http://localhost:1455/callback"
-OPENAI_OAUTH_SCOPES = ("openid", "profile", "offline_access")
+OPENAI_OAUTH_AUTH_ENDPOINT = "https://auth.openai.com/oauth/authorize"
+OPENAI_OAUTH_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
+OPENAI_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+OPENAI_OAUTH_REDIRECT_URI = "http://localhost:1455/auth/callback"
+OPENAI_OAUTH_SCOPES = ("openid", "profile", "email", "offline_access")
 
 
 @dataclass(frozen=True)
@@ -66,7 +68,13 @@ class OAuthBroker:
         cached = load_oauth_token(home=self.home, provider=key)
         if cached is not None and not cached.is_expired():
             return cached
-        if allow_login and key in self._flows:
+        flow = self._flows.get(key)
+        refresh = getattr(flow, "refresh", None) if flow is not None else None
+        if cached is not None and cached.refresh_token and callable(refresh):
+            entry = refresh(home=self.home, cached=cached)
+            save_oauth_token(home=self.home, entry=entry)
+            return entry
+        if allow_login and flow is not None:
             return self.login(key)
         return cached
 
@@ -232,6 +240,14 @@ class OpenAIOAuthFlow:
         auth_code = self._receive_callback(state)
         return self._exchange_code(auth_code, code_verifier)
 
+    def refresh(self, *, home: Path, cached: OAuthTokenCacheEntry) -> OAuthTokenCacheEntry:
+        if not cached.refresh_token:
+            raise RuntimeError(
+                "The cached OpenAI OAuth session has no refresh token. "
+                "Run `ares auth login openai` interactively."
+            )
+        return self._exchange_refresh_token(cached)
+
     @staticmethod
     def _generate_code_verifier() -> str:
         return secrets.token_urlsafe(64)
@@ -251,6 +267,9 @@ class OpenAIOAuthFlow:
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
             "state": state,
+            "id_token_add_organizations": "true",
+            "codex_cli_simplified_flow": "true",
+            "originator": "ares",
         }
         return f"{self.auth_endpoint}?{urllib.parse.urlencode(params)}"
 
@@ -305,49 +324,83 @@ class OpenAIOAuthFlow:
         return received_code
 
     def _exchange_code(self, code: str, code_verifier: str) -> OAuthTokenCacheEntry:
-        import urllib.request
-
-        payload = urllib.parse.urlencode({
+        token_data = self._request_token({
             "grant_type": "authorization_code",
             "client_id": self.client_id,
             "code": code,
             "redirect_uri": self.redirect_uri,
             "code_verifier": code_verifier,
-        }).encode("utf-8")
+        })
+        return self._entry_from_token_data(token_data, source="openai-pkce")
 
+    def _exchange_refresh_token(self, cached: OAuthTokenCacheEntry) -> OAuthTokenCacheEntry:
+        try:
+            token_data = self._request_token({
+                "grant_type": "refresh_token",
+                "client_id": self.client_id,
+                "refresh_token": cached.refresh_token,
+            })
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "OpenAI OAuth refresh failed. Run `ares auth login openai` "
+                "interactively to renew the session."
+            ) from exc
+        return self._entry_from_token_data(
+            token_data,
+            source="openai-refresh",
+            fallback_refresh_token=cached.refresh_token,
+        )
+
+    def _request_token(self, form: dict[str, str]) -> dict[str, object]:
+        import json as _json
+        payload = urllib.parse.urlencode(form).encode("utf-8")
         request = urllib.request.Request(
             self.token_endpoint,
             data=payload,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             method="POST",
         )
-
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 body = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(
+                f"OpenAI OAuth token endpoint returned HTTP {exc.code}"
+            ) from exc
         except Exception as exc:
-            raise RuntimeError(f"OpenAI OAuth token exchange failed: {exc}") from exc
-
-        import json as _json
+            raise RuntimeError(f"OpenAI OAuth token request failed: {exc}") from exc
         try:
             token_data = _json.loads(body)
         except _json.JSONDecodeError as exc:
             raise RuntimeError("OpenAI OAuth token endpoint returned invalid JSON") from exc
+        if not isinstance(token_data, dict):
+            raise RuntimeError("OpenAI OAuth token endpoint returned an invalid response")
+        return token_data
 
+    def _entry_from_token_data(
+        self,
+        token_data: dict[str, object],
+        *,
+        source: str,
+        fallback_refresh_token: str = "",
+    ) -> OAuthTokenCacheEntry:
         access_token = str(token_data.get("access_token", "")).strip()
         if not access_token:
             raise RuntimeError("OpenAI OAuth token response did not include access_token")
 
         expires_in = token_data.get("expires_in", 3600)
         ttl = max(int(expires_in), 60) if isinstance(expires_in, (int, float)) else 3600
-        refresh_token = str(token_data.get("refresh_token", "")).strip()
+        refresh_token = (
+            str(token_data.get("refresh_token", "")).strip()
+            or fallback_refresh_token
+        )
 
         return OAuthTokenCacheEntry(
             provider=self.provider,
             access_token=access_token,
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl),
             refresh_token=refresh_token,
-            metadata={"source": "openai-pkce"},
+            metadata={"source": source},
         )
 
 

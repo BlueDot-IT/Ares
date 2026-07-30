@@ -119,6 +119,14 @@ class OAuthFlowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             broker = OAuthBroker(home=home, flows=[_FakeFlow("gemini")])
+            save_oauth_token(
+                home=home,
+                entry=OAuthTokenCacheEntry(
+                    provider="gemini",
+                    access_token="cached-gemini-token",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ),
+            )
 
             google_module = types.ModuleType("google")
             google_auth_module = types.ModuleType("google.auth")
@@ -144,18 +152,42 @@ class OAuthFlowTests(unittest.TestCase):
                 credentials = build_google_oauth_credentials("", home=home, provider="gemini", broker=broker)
                 credentials.refresh(None)
 
-        self.assertEqual(credentials.token, "gemini-token-1")
+        self.assertEqual(credentials.token, "cached-gemini-token")
         self.assertIsNotNone(credentials.expiry)
 
     def test_openai_oauth_token_provider_uses_broker_before_legacy_token_command(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            broker = OAuthBroker(home=home, flows=[_FakeFlow("openai")])
+            flow = _FakeFlow("openai")
+            broker = OAuthBroker(home=home, flows=[flow])
+            save_oauth_token(
+                home=home,
+                entry=OAuthTokenCacheEntry(
+                    provider="openai",
+                    access_token="cached-openai-token",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ),
+            )
 
             provider = build_openai_oauth_token_provider("print-openai-token", home=home, provider="openai", broker=broker)
             token = provider()
 
-        self.assertEqual(token, "openai-token-1")
+        self.assertEqual(token, "cached-openai-token")
+        self.assertEqual(flow.calls, 0)
+
+    def test_runtime_provider_does_not_start_interactive_login(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            flow = _FakeFlow("openai")
+            broker = OAuthBroker(home=home, flows=[flow])
+            provider = build_openai_oauth_token_provider(
+                "", home=home, provider="openai", broker=broker
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "ares auth login openai"):
+                provider()
+
+        self.assertEqual(flow.calls, 0)
 
     def test_openai_oauth_token_provider_falls_back_to_legacy_token_command(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,13 +200,13 @@ class OAuthFlowTests(unittest.TestCase):
         self.assertEqual(token, "legacy-token")
         run_command.assert_called_once_with("print-openai-token")
 
-    def test_configured_oauth_flow_errors_are_not_masked_by_empty_legacy_command(self):
+    def test_configured_oauth_flow_requires_explicit_interactive_login(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             broker = OAuthBroker(home=home, flows=[_FailingFlow("openai", message="provider login failed")])
             provider = build_openai_oauth_token_provider("", home=home, provider="openai", broker=broker)
 
-            with self.assertRaisesRegex(RuntimeError, "provider login failed"):
+            with self.assertRaisesRegex(RuntimeError, "ares auth login openai"):
                 provider()
     def test_oauth_cache_rejects_unsafe_provider_cache_keys(self):
         from ares.llm.oauth_cache import oauth_cache_path
@@ -238,13 +270,17 @@ class OpenAIOAuthFlowTests(unittest.TestCase):
         params = urllib.parse.parse_qs(parsed.query)
 
         self.assertEqual(parsed.scheme, "https")
-        self.assertIn("auth.openai.com", parsed.netloc)
+        self.assertEqual(parsed.netloc, "auth.openai.com")
+        self.assertEqual(parsed.path, "/oauth/authorize")
         self.assertEqual(params["response_type"], ["code"])
         self.assertEqual(params["code_challenge"], ["test-challenge"])
         self.assertEqual(params["code_challenge_method"], ["S256"])
         self.assertEqual(params["state"], ["test-state"])
         self.assertIn("openid", params["scope"][0])
+        self.assertIn("email", params["scope"][0])
         self.assertIn("offline_access", params["scope"][0])
+        self.assertEqual(params["codex_cli_simplified_flow"], ["true"])
+        self.assertEqual(params["originator"], ["ares"])
 
     def test_exchange_code_returns_cached_entry(self):
         flow = OpenAIOAuthFlow()
@@ -266,6 +302,79 @@ class OpenAIOAuthFlowTests(unittest.TestCase):
         self.assertEqual(entry.provider, "openai")
         self.assertEqual(entry.access_token, "test-access-token")
         self.assertEqual(entry.refresh_token, "test-refresh-token")
+
+    def test_expired_openai_token_refreshes_without_browser_login(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            flow = OpenAIOAuthFlow()
+            save_oauth_token(
+                home=home,
+                entry=OAuthTokenCacheEntry(
+                    provider="openai",
+                    access_token="expired-access",
+                    expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+                    refresh_token="old-refresh",
+                ),
+            )
+            broker = OAuthBroker(home=home, flows=[flow])
+            refreshed = OAuthTokenCacheEntry(
+                provider="openai",
+                access_token="fresh-access",
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                refresh_token="rotated-refresh",
+                metadata={"source": "openai-refresh"},
+            )
+
+            with patch.object(flow, "refresh", return_value=refreshed) as refresh:
+                with patch.object(flow, "login") as login:
+                    entry = broker.get_entry("openai", allow_login=False)
+
+            cached = load_oauth_token(home=home, provider="openai")
+
+        self.assertEqual(entry.access_token, "fresh-access")
+        self.assertEqual(cached.refresh_token, "rotated-refresh")
+        refresh.assert_called_once()
+        login.assert_not_called()
+
+    def test_refresh_preserves_refresh_token_when_provider_does_not_rotate_it(self):
+        flow = OpenAIOAuthFlow()
+        cached = OAuthTokenCacheEntry(
+            provider="openai",
+            access_token="expired-access",
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            refresh_token="existing-refresh",
+        )
+        fake_response = json.dumps({
+            "access_token": "fresh-access",
+            "expires_in": 3600,
+        }).encode("utf-8")
+        mock_resp = unittest.mock.MagicMock()
+        mock_resp.read.return_value = fake_response
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = lambda s, *a: None
+
+        with patch("ares.llm.oauth_flows.urllib.request.urlopen", return_value=mock_resp):
+            entry = flow.refresh(home=Path("/tmp"), cached=cached)
+
+        self.assertEqual(entry.access_token, "fresh-access")
+        self.assertEqual(entry.refresh_token, "existing-refresh")
+        self.assertEqual(entry.metadata["source"], "openai-refresh")
+
+    def test_refresh_failure_is_actionable_and_does_not_open_browser(self):
+        flow = OpenAIOAuthFlow()
+        cached = OAuthTokenCacheEntry(
+            provider="openai",
+            access_token="expired-access",
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            refresh_token="invalid-refresh",
+        )
+
+        with patch.object(flow, "_request_token", side_effect=RuntimeError("HTTP 400")):
+            with patch.object(flow, "_open_browser") as open_browser:
+                with self.assertRaisesRegex(RuntimeError, "ares auth login openai"):
+                    flow.refresh(home=Path("/tmp"), cached=cached)
+
+        open_browser.assert_not_called()
 
     def test_broker_includes_openai_flow_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -290,9 +399,17 @@ class OpenAIOAuthFlowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             broker = OAuthBroker(home=home, flows=[_FakeFlow("openai")])
+            save_oauth_token(
+                home=home,
+                entry=OAuthTokenCacheEntry(
+                    provider="openai",
+                    access_token="cached-openai-token",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ),
+            )
             provider = build_openai_oauth_token_provider("", home=home, provider="openai", broker=broker)
             token = provider()
-        self.assertEqual(token, "openai-token-1")
+        self.assertEqual(token, "cached-openai-token")
 
     def test_openai_oauth_login_uses_broker_when_configured(self):
         with tempfile.TemporaryDirectory() as tmp:

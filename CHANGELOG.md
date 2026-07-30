@@ -2,6 +2,26 @@
 
 All notable changes to Ares are documented here.
 
+## 1.0.1 - Security and OAuth hardening
+
+### Fixed
+
+- Bound evidence-memory search to the current engagement target, preventing cross-target recall while preserving same-target history.
+- Added non-interactive OpenAI OAuth refresh-token rotation and actionable reauthentication failures.
+- Prevented background model execution from opening an interactive OAuth browser flow.
+- Required authenticated, non-secret session provenance for gateway dangerous approvals.
+- Removed internal engagement and authorization fields from model-visible GhostMCP schemas.
+- Replaced the misleading deterministic `run_agentic()` behavior with a fail-closed API and an honestly named contextual deterministic path.
+- Replaced gateway and dashboard port-collision tracebacks with concise operator errors.
+- Restored Windows CLI startup by making curses UI loading lazy and installing `windows-curses` only on Windows.
+- Made private-file and SQLite initialization tolerate Windows' lack of `os.fchmod` while retaining POSIX mode tightening where supported.
+
+### Release engineering
+
+- Moved package metadata and support links to the canonical `BlueDot-IT/Ares` repository.
+- Made CI and release wheel smoke tests version-independent.
+- Added tag/package-version verification and GitHub release publication with wheel and source artifacts.
+
 ## 1.0.0 - Stable v1
 
 Ares v1.0.0 is the first stable release of the operator-supervised Ares security testing runtime for authorized engagements.

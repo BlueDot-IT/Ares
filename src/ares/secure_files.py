@@ -10,6 +10,17 @@ PRIVATE_DIR_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 
 
+def tighten_private_fd(fd: int) -> None:
+    """Apply POSIX private-file permissions when the platform supports them."""
+    fchmod = getattr(os, "fchmod", None)
+    if fchmod is None:
+        return
+    try:
+        fchmod(fd, PRIVATE_FILE_MODE)
+    except PermissionError:
+        pass
+
+
 def ensure_private_dir(path: Path | str) -> Path:
     directory = Path(path).expanduser()
     directory.mkdir(mode=PRIVATE_DIR_MODE, parents=True, exist_ok=True)
@@ -53,7 +64,7 @@ def private_text_writer(
     fd, tmp_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=str(destination.parent), text=True)
     tmp_path = Path(tmp_name)
     try:
-        os.fchmod(fd, PRIVATE_FILE_MODE)
+        tighten_private_fd(fd)
         with os.fdopen(fd, "w", encoding=encoding) as handle:
             yield handle
         os.replace(tmp_path, destination)
@@ -85,10 +96,7 @@ def append_private_line(path: Path | str, line: str, *, encoding: str = "utf-8")
             if written <= 0:
                 raise OSError("private append wrote zero bytes")
             view = view[written:]
-        try:
-            os.fchmod(fd, PRIVATE_FILE_MODE)
-        except PermissionError:
-            pass
+        tighten_private_fd(fd)
     finally:
         os.close(fd)
     try:

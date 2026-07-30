@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator
 
+from ares.secure_files import PRIVATE_FILE_MODE, tighten_private_fd
+
 if TYPE_CHECKING:
     from ares.mission.findings import MissionFinding
     from ares.mission.model import MissionRun
@@ -25,11 +27,19 @@ class StateDB:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        fd = os.open(
+            self.path,
+            os.O_CREAT | os.O_RDWR,
+            PRIVATE_FILE_MODE,
+        )
         try:
-            os.fchmod(fd, 0o600)
+            tighten_private_fd(fd)
         finally:
             os.close(fd)
+        try:
+            self.path.chmod(PRIVATE_FILE_MODE)
+        except PermissionError:
+            pass
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
         return conn
@@ -396,6 +406,11 @@ class StateDB:
             rows = conn.execute("SELECT * FROM sessions ORDER BY id").fetchall()
             return [dict(row) for row in rows]
 
+    def get_session(self, session_id: int) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            return dict(row) if row is not None else None
+
     def list_tool_calls(self, session_id: int) -> list[dict[str, Any]]:
         with self._connection() as conn:
             rows = conn.execute(
@@ -525,6 +540,7 @@ class StateDB:
         *,
         query: str,
         target: str | None = None,
+        session_id: int | None = None,
         tags: tuple[str, ...] = (),
         limit: int = 6,
     ) -> list[dict[str, Any]]:
@@ -553,6 +569,9 @@ class StateDB:
                 if target:
                     sql += " AND mc.target = ?"
                     params.append(target)
+                if session_id is not None:
+                    sql += " AND mc.session_id = ?"
+                    params.append(session_id)
                 sql += " ORDER BY mc.created_at DESC LIMIT ?"
                 params.append(limit)
                 rows = conn.execute(sql, params).fetchall()
@@ -576,6 +595,9 @@ class StateDB:
             if target:
                 sql += " AND target = ?"
                 params.append(target)
+            if session_id is not None:
+                sql += " AND session_id = ?"
+                params.append(session_id)
             sql += " ORDER BY created_at DESC LIMIT ?"
             params.append(limit * 3)
             rows = conn.execute(sql, params).fetchall()
