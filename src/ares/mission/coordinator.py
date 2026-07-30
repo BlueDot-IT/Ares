@@ -80,6 +80,13 @@ class MissionCoordinator:
         self.mission = mission
         self.profile = get_profile(mission.profile_id)
 
+    def _dispatcher_allowed_paths(self) -> tuple[str, ...]:
+        if self.mission.scope.allowed_paths:
+            return tuple(self.mission.scope.allowed_paths)
+        if self.mission.scope.target and not self.mission.scope.allowed_hosts:
+            return (self.mission.scope.target,)
+        return ()
+
     def validate_task(self, task: MissionTask) -> tuple[bool, str]:
         if task.mission_id != self.mission.id:
             return False, "mission_id mismatch"
@@ -374,6 +381,9 @@ class MissionCoordinator:
                 else PolicyContext().allowed_cidrs
             ),
             allowed_hosts=tuple(self.mission.scope.allowed_hosts),
+            allowed_paths=self._dispatcher_allowed_paths(),
+            forbidden_paths=tuple(self.mission.scope.forbidden_paths),
+            scope_bound=True,
         )
         dispatcher = ToolDispatcher(
             registry=registry,
@@ -573,6 +583,9 @@ class MissionCoordinator:
                 else PolicyContext().allowed_cidrs
             ),
             allowed_hosts=tuple(self.mission.scope.allowed_hosts),
+            allowed_paths=self._dispatcher_allowed_paths(),
+            forbidden_paths=tuple(self.mission.scope.forbidden_paths),
+            scope_bound=True,
         )
         dispatcher = ToolDispatcher(
             registry=registry,

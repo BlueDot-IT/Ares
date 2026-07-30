@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator, TextIO
 
 PRIVATE_DIR_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
@@ -19,15 +21,41 @@ def ensure_private_dir(path: Path | str) -> Path:
     return directory
 
 
-def write_private_text(path: Path | str, content: str, *, encoding: str = "utf-8") -> Path:
+def write_private_text(
+    path: Path | str,
+    content: str,
+    *,
+    encoding: str = "utf-8",
+    private_parent: bool = True,
+) -> Path:
     destination = Path(path).expanduser()
-    ensure_private_dir(destination.parent)
+    with private_text_writer(
+        destination,
+        encoding=encoding,
+        private_parent=private_parent,
+    ) as handle:
+        handle.write(content)
+    return destination
+
+
+@contextmanager
+def private_text_writer(
+    path: Path | str,
+    *,
+    encoding: str = "utf-8",
+    private_parent: bool = True,
+) -> Iterator[TextIO]:
+    destination = Path(path).expanduser()
+    if private_parent:
+        ensure_private_dir(destination.parent)
+    else:
+        destination.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=str(destination.parent), text=True)
     tmp_path = Path(tmp_name)
     try:
         os.fchmod(fd, PRIVATE_FILE_MODE)
         with os.fdopen(fd, "w", encoding=encoding) as handle:
-            handle.write(content)
+            yield handle
         os.replace(tmp_path, destination)
         try:
             destination.chmod(PRIVATE_FILE_MODE)
@@ -43,7 +71,6 @@ def write_private_text(path: Path | str, content: str, *, encoding: str = "utf-8
         except OSError:
             pass
         raise
-    return destination
 
 
 def append_private_line(path: Path | str, line: str, *, encoding: str = "utf-8") -> Path:

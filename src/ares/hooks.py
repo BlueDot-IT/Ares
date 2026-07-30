@@ -9,6 +9,7 @@ from typing import Any
 
 from ares.engagement_memory import write_engagement_memory
 from ares.reporting.markdown import render_session_report
+from ares.secure_files import write_private_text
 from ares.state.db import StateDB
 
 
@@ -35,7 +36,10 @@ class HookManager:
                 reports_dir = self.home / "reports"
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 report_path = reports_dir / f"session-{int(session_id)}.md"
-                report_path.write_text(render_session_report(state_db, int(session_id)), encoding="utf-8")
+                write_private_text(
+                    report_path,
+                    render_session_report(state_db, int(session_id)),
+                )
                 payload["report_path"] = str(report_path)
         if payload.get("type") in {"session_finished", "session_failed"} and payload.get("session_id") is not None:
             payload["engagement_memory_path"] = str(write_engagement_memory(self.home, payload))

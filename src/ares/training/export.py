@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ares.agent.tool_result_indexer import redact_secrets
+from ares.secure_files import private_text_writer
 from ares.state.db import StateDB
 
 
@@ -147,7 +148,7 @@ def export_training_data(
     sessions = state_db.list_sessions()
     exported = 0
 
-    with output_path.open("w", encoding="utf-8") as f:
+    with private_text_writer(output_path, private_parent=False) as f:
         for session in sessions:
             if session.get("status") != min_status:
                 continue
@@ -170,7 +171,7 @@ def export_mission_traces(state_db: StateDB, out_path: Path | str) -> int:
     missions = state_db.list_missions()
     exported = 0
 
-    with out_path.open("w", encoding="utf-8") as f:
+    with private_text_writer(out_path, private_parent=False) as f:
         for m in missions:
             if m.get("status") != "completed":
                 continue

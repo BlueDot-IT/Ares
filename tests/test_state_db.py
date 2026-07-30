@@ -56,7 +56,7 @@ class RunStateIntegrationTests(unittest.TestCase):
         class FakeModel:
             def __init__(self):
                 self.responses = [
-                    ModelResponse(tool_calls=[ToolCall(name="split_targets", args={"targets": "127.0.0.1;localhost"})]),
+                    ModelResponse(tool_calls=[ToolCall(name="split_targets", args={"targets": "127.0.0.1"})]),
                     ModelResponse(final_text="done"),
                 ]
 

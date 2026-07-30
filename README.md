@@ -122,6 +122,9 @@ ares run --target 127.0.0.1 --approve-dangerous --prompt "..."
 ```
 
 `--approve-dangerous` only satisfies dispatcher approval gates. Scope and risk policy still run before execution.
+`--target` is also the dispatcher scope boundary: network arguments must match
+the declared host scope, filesystem arguments must remain beneath the declared
+path, and opaque raw tool arguments fail closed.
 
 ## Command surface
 
@@ -175,6 +178,10 @@ Gateway modes:
 - `loopback` binds for local use and rejects non-loopback clients
 - `lan` allows loopback, private, and link-local clients
 - `exposed` allows remote clients, so use bearer auth and a CIDR allowlist
+
+When `--auth-enabled` is configured, protected API endpoints require a bearer
+session in every gateway mode. Dashboard assets plus login and pairing
+bootstrap endpoints remain reachable so an operator can authenticate.
 
 Pairing flow against a running gateway:
 
@@ -256,7 +263,7 @@ ares auth logout --provider openai
 ares auth logout --provider gemini
 ```
 
-OpenAI OAuth uses a PKCE browser callback on `http://localhost:1455/callback`. Gemini OAuth uses an installed-app browser flow when `GOOGLE_OAUTH_CLIENT_SECRETS` points to a Google client secrets file, otherwise it falls back to Google application default credentials. OpenRouter, Anthropic, local, and custom OpenAI-compatible profiles remain API-key based unless a provider-specific OAuth broker is added.
+OpenAI OAuth uses the ChatGPT Codex Responses backend, not Platform API quota. Browser login uses a PKCE callback on `http://localhost:1455/callback`. Gemini OAuth uses an installed-app browser flow when `GOOGLE_OAUTH_CLIENT_SECRETS` points to a Google client secrets file, otherwise it falls back to Google application default credentials. OpenRouter, Anthropic, local, and custom OpenAI-compatible profiles remain API-key based unless a provider-specific OAuth broker is added.
 
 ## Context and evidence memory
 
