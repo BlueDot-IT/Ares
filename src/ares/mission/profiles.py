@@ -16,6 +16,22 @@ class MissionProfile:
 
 
 PROFILES: dict[str, MissionProfile] = {
+    "autonomous-recon": MissionProfile(
+        id="autonomous-recon",
+        name="Autonomous Recon-to-Coverage",
+        phases=(
+            MissionPhase.PLAN,
+            MissionPhase.RECON,
+            MissionPhase.ANALYZE,
+            MissionPhase.REPORT,
+        ),
+        enabled_toolsets=("ghostmcp", "redteam_report"),
+        max_risk="active",
+        description=(
+            "Model-planned passive and safe-active reconnaissance governed "
+            "by a persistent attack-surface graph and coverage ledger."
+        ),
+    ),
     "source-code-audit": MissionProfile(
         id="source-code-audit",
         name="Source Code Audit",

@@ -53,6 +53,9 @@ def test_mission_report_rendering():
     assert "# ARES Mission Report" in report
     assert "## Summary" in report
     assert "## Scope" in report
+    assert "## Attack Surface" in report
+    assert "## Coverage Ledger" in report
+    assert "## Planner Provenance" in report
     assert "## Tasks" in report
     assert "## Validated Findings" in report
     assert "## Refuted Findings" in report

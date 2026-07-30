@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import json
 import ipaddress
+import json
 import time
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from ares.mission.model import MissionRun, MissionStatus
+from ares.mission.model import MissionPhase, MissionRun, MissionStatus
 from ares.mission.tasks import MissionTask, TaskStatus, task_can_run
 from ares.mission.operators import get_operator
 from ares.mission.profiles import get_profile
@@ -37,9 +37,17 @@ def _host_from_target(target: str) -> str:
     parsed = urlparse(target)
     if parsed.scheme and parsed.hostname:
         return parsed.hostname.lower()
-    value = target.strip().strip("[]")
-    if ":" in value:
-        value = value.split(":", 1)[0]
+    value = target.strip()
+    if not value:
+        return ""
+    unbracketed = value.removeprefix("[").removesuffix("]")
+    try:
+        return str(ipaddress.ip_address(unbracketed)).lower()
+    except ValueError:
+        pass
+    parsed = urlparse(f"//{value}")
+    if parsed.hostname:
+        return parsed.hostname.lower()
     return value.lower()
 
 
@@ -547,13 +555,254 @@ class MissionCoordinator:
 
     def run_agentic(
         self,
-        **_: Any,
+        *,
+        config: AppConfig,
+        state_db: StateDB,
+        model: Any | None = None,
+        registry: ToolRegistry | None = None,
+        max_tasks: int = 20,
+        approval_callback: Callable[[ToolCall, Any], bool] | None = None,
     ) -> str:
-        """Fail closed until genuine model-driven mission planning exists."""
-        raise NotImplementedError(
-            "Model-driven mission execution is not implemented. "
-            "Use run_deterministic() or run_contextual_deterministic(); "
-            "both execute an operator-supplied, policy-validated task graph."
+        """Run a model-planned mission through deterministic governance.
+
+        The model selects only from pending coverage IDs. Trusted code compiles
+        that choice into a fixed capability, tool, target, and argument set
+        before the existing task validator and dispatcher can execute it.
+        """
+        from ares.autonomy.catalog import ReconCapabilityCatalog
+        from ares.autonomy.coverage import CoverageLedger, CoverageStatus
+        from ares.autonomy.graph import AttackSurfaceGraph, NodeKind
+        from ares.autonomy.planner import MissionPlanner
+        from ares.autonomy.projector import AttackSurfaceProjector
+        from ares.run import build_model, build_registry
+
+        if self.mission.profile_id != "autonomous-recon":
+            raise ValueError(
+                "model-driven planning is currently supported only by the "
+                "autonomous-recon profile"
+            )
+        if not self.mission.scope.allowed_hosts:
+            raise ValueError(
+                "autonomous network missions require explicit allowed_hosts"
+            )
+        if not _host_is_allowed(
+            self.mission.scope.target,
+            self.mission.scope.allowed_hosts,
+        ):
+            raise ValueError("mission target is outside explicit allowed_hosts")
+        if max_tasks < 1:
+            raise ValueError("max_tasks must be at least 1")
+
+        if state_db.get_mission(self.mission.id) is None:
+            state_db.create_mission(self.mission)
+        state_db.update_mission_status(
+            self.mission.id,
+            MissionStatus.RUNNING.value,
+            "plan",
+        )
+        self.mission.status = MissionStatus.RUNNING
+
+        session_id = state_db.create_session(
+            prompt="Autonomous recon mission",
+            target=self.mission.scope.target,
+            agent="mission-planner",
+            model=config.llm.model,
+            mode="safe-active",
+        )
+        effective_registry = registry or build_registry(
+            config,
+            state_db=state_db,
+            session_id=session_id,
+        )
+        effective_model = model or build_model(config)
+        policy = PolicyContext(
+            max_risk=self.mission.scope.max_risk,
+            allowed_cidrs=(),
+            allowed_hosts=tuple(self.mission.scope.allowed_hosts),
+            allowed_paths=(),
+            forbidden_paths=tuple(self.mission.scope.forbidden_paths),
+            scope_bound=True,
+        )
+        dispatcher = ToolDispatcher(
+            registry=effective_registry,
+            policy=policy,
+            recorder=state_db,
+            session_id=session_id,
+            approval_callback=approval_callback,
+            engagement_id=self.mission.id,
+        )
+
+        graph = AttackSurfaceGraph(state_db, self.mission.id)
+        target_host = _host_from_target(self.mission.scope.target)
+        graph.upsert_node(
+            kind=NodeKind.HOST,
+            key=target_host,
+            label=target_host,
+            attributes={"address": target_host, "scope_root": True},
+        )
+        coverage = CoverageLedger(
+            state_db,
+            self.mission.id,
+            graph,
+            port_scope=str(
+                self.mission.metadata.get("port_scope") or "1-1000"
+            ),
+        )
+        coverage.refresh_requirements()
+        planner = MissionPlanner(
+            model=effective_model,
+            state_db=state_db,
+            mission_id=self.mission.id,
+            session_id=session_id,
+            graph=graph,
+            coverage=coverage,
+        )
+        projector = AttackSurfaceProjector(
+            state_db,
+            self.mission.id,
+            session_id,
+            graph,
+        )
+        catalog = ReconCapabilityCatalog()
+        start_cycle = (
+            len(state_db.list_planner_cycles(self.mission.id)) + 1
+        )
+
+        try:
+            for cycle in range(start_cycle, start_cycle + max_tasks):
+                coverage.refresh_requirements()
+                decision = planner.plan_next(cycle=cycle)
+                if decision.stop:
+                    break
+                pending_by_id = {
+                    item["id"]: item for item in coverage.pending()
+                }
+                coverage_item = pending_by_id.get(decision.coverage_id or "")
+                if coverage_item is None:
+                    raise RuntimeError(
+                        "governed planner decision no longer references "
+                        "pending coverage"
+                    )
+                task = catalog.compile(
+                    mission_id=self.mission.id,
+                    cycle=cycle,
+                    coverage_item=coverage_item,
+                )
+                valid, reason = self.validate_task(task)
+                if not valid:
+                    task.status = TaskStatus.BLOCKED
+                    task.block_reason = reason
+                    state_db.record_mission_task(task)
+                    coverage.update(
+                        coverage_item["id"],
+                        status=CoverageStatus.BLOCKED,
+                        last_error=reason,
+                    )
+                    continue
+
+                state_db.record_mission_task(task)
+                coverage.update(
+                    coverage_item["id"],
+                    status=CoverageStatus.RUNNING,
+                    increment_attempts=True,
+                )
+                state_db.update_mission_task_status(task.id, "running")
+                operator_run_id = state_db.record_mission_operator_run(
+                    mission_id=self.mission.id,
+                    task_id=task.id,
+                    role_id=task.role_id,
+                    session_id=session_id,
+                    status="running",
+                    summary=decision.reason,
+                )
+                operator = get_operator(task.role_id)
+                result = dispatcher.dispatch(
+                    ToolCall(
+                        name=task.tool_name or "",
+                        args=dict(task.args),
+                        required_risk=operator.max_risk,
+                    )
+                )
+                calls = state_db.list_tool_calls(session_id)
+                tool_call_id = int(calls[-1]["id"]) if calls else None
+                evidence_ids = [tool_call_id] if tool_call_id is not None else []
+
+                if result.status == "ok":
+                    state_db.update_mission_task_status(task.id, "completed")
+                    coverage.update(
+                        coverage_item["id"],
+                        status=CoverageStatus.COMPLETE,
+                        evidence_tool_call_ids=evidence_ids,
+                    )
+                    if tool_call_id is not None:
+                        projector.project_tool_call(tool_call_id)
+                    state_db.finish_mission_operator_run(
+                        operator_run_id,
+                        status="completed",
+                        summary=decision.reason,
+                    )
+                else:
+                    state_db.update_mission_task_status(
+                        task.id,
+                        "failed",
+                        result.error,
+                    )
+                    coverage.update(
+                        coverage_item["id"],
+                        status=CoverageStatus.INCONCLUSIVE,
+                        evidence_tool_call_ids=evidence_ids,
+                        last_error=result.error,
+                    )
+                    state_db.finish_mission_operator_run(
+                        operator_run_id,
+                        status="failed",
+                        summary=result.error,
+                    )
+            coverage.refresh_requirements()
+        except Exception:
+            self.mission.status = MissionStatus.FAILED
+            self.mission.phase = MissionPhase.REPORT
+            state_db.update_mission_status(
+                self.mission.id,
+                MissionStatus.FAILED.value,
+                "report",
+            )
+            state_db.finish_session(session_id, "error")
+            raise
+
+        if coverage.required_open():
+            self.mission.status = MissionStatus.BLOCKED
+        else:
+            self.mission.status = MissionStatus.COMPLETED
+        self.mission.phase = MissionPhase.REPORT
+        state_db.update_mission_status(
+            self.mission.id,
+            self.mission.status.value,
+            "report",
+        )
+        state_db.finish_session(
+            session_id,
+            (
+                "final_response"
+                if self.mission.status == MissionStatus.COMPLETED
+                else "blocked"
+            ),
+        )
+
+        tasks = state_db.list_mission_tasks(self.mission.id)
+        findings = state_db.list_mission_findings(self.mission.id)
+        evidence_chunks = state_db.list_mission_evidence_chunks(
+            self.mission.id
+        )
+        return render_mission_report(
+            mission=self.mission,
+            tasks=tasks,
+            findings=findings,
+            evidence_chunks=evidence_chunks,
+            attack_surface_nodes=graph.nodes(),
+            attack_surface_edges=graph.edges(),
+            coverage_items=coverage.items(),
+            planner_cycles=state_db.list_planner_cycles(self.mission.id),
         )
 
     def run_contextual_deterministic(

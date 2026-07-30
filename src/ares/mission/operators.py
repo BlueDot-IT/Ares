@@ -42,6 +42,7 @@ OPERATORS: dict[str, OperatorRole] = {
             "amass_passive", "dns_lookup", "reverse_dns", "whois",
             "security_txt", "http_probe", "tls_certificate",
             "tcp_port_scan", "nmap_basic", "whatweb",
+            "banner_grab", "sslscan",
         ),
     ),
     "scanner": OperatorRole(
