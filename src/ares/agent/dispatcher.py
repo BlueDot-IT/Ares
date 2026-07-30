@@ -79,7 +79,26 @@ class ToolDispatcher:
                 result=compact_result,
                 duration_ms=self._duration_ms(started),
             )
-            self._record(result, raw_result=raw_result)
+            evidence_tool_call_id = self._record(result, raw_result=raw_result)
+            if (
+                evidence_tool_call_id is not None
+                and compact_result != raw_result
+            ):
+                if isinstance(compact_result, dict):
+                    compact_result["evidence_tool_call_id"] = evidence_tool_call_id
+                else:
+                    compact_result = {
+                        "result": compact_result,
+                        "evidence_tool_call_id": evidence_tool_call_id,
+                    }
+                result = ToolResult(
+                    tool=call.name,
+                    args=call.args,
+                    status="ok",
+                    result=compact_result,
+                    duration_ms=result.duration_ms,
+                )
+            self._normalize_evidence(result, raw_result=raw_result)
             self._index_memory(result, raw_result=raw_result)
             return result
         except Exception as exc:
@@ -113,10 +132,10 @@ class ToolDispatcher:
                 future.cancel()
                 raise TimeoutError(f"tool {call.name!r} timed out after {self.tool_timeout_seconds} seconds") from exc
 
-    def _record(self, result: ToolResult, *, raw_result: Any) -> None:
+    def _record(self, result: ToolResult, *, raw_result: Any) -> int | None:
         if self.recorder is None or self.session_id is None:
-            return
-        self.recorder.record_tool_call(
+            return None
+        return self.recorder.record_tool_call(
             session_id=self.session_id,
             tool=result.tool,
             args=result.args,
@@ -156,6 +175,27 @@ class ToolDispatcher:
             )
         except Exception:
             # Indexing must never interfere with tool execution
+            pass
+
+    def _normalize_evidence(self, result: ToolResult, *, raw_result: Any) -> None:
+        """Populate structured state from supported raw tool evidence."""
+        if self.recorder is None or self.session_id is None:
+            return
+        if "nmap" not in result.tool.lower() or not isinstance(raw_result, dict):
+            return
+        stdout = raw_result.get("stdout")
+        if not isinstance(stdout, str) or not stdout.strip():
+            return
+        try:
+            from ares.evidence.nmap import parse_nmap_stdout_into_state
+
+            parse_nmap_stdout_into_state(
+                self.recorder,
+                session_id=self.session_id,
+                stdout=stdout,
+            )
+        except Exception:
+            # Normalization is best-effort and must not rewrite tool status.
             pass
 
     def _infer_tags(self, tool_name: str, result: Any, status: str) -> list[str]:

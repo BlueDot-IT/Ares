@@ -104,6 +104,22 @@ class GhostMCPAdapterTests(unittest.TestCase):
         self.assertEqual(parameters["properties"], {})
         self.assertEqual(parameters["required"], [])
 
+    def test_legacy_ghostmcp_tools_preserve_declared_input_schemas(self):
+        from lib.ghostmcp_runner import GhostMCPToolRunner
+
+        runner = GhostMCPToolRunner(transport="inproc")
+        try:
+            nmap_schema = runner.tools["nmap_basic"]["inputSchema"]
+            banner_schema = runner.tools["banner_grab"]["inputSchema"]
+        finally:
+            runner.close()
+
+        self.assertIn("target", nmap_schema["properties"])
+        self.assertIn("ports", nmap_schema["properties"])
+        self.assertEqual(nmap_schema["required"], ["target"])
+        self.assertIn("target", banner_schema["properties"])
+        self.assertEqual(banner_schema["required"], ["target"])
+
     def test_internal_engagement_fields_are_not_model_visible(self):
         from ares.tools.ghostmcp_adapter import register_ghostmcp_tools
         from ares.tools.registry import ToolRegistry

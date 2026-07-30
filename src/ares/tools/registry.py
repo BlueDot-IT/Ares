@@ -89,9 +89,21 @@ class ToolRegistry:
             raise ValueError(f"tool already registered: {name}")
         if risk not in RISK_ORDER:
             raise ValueError(f"unknown risk level: {risk}")
-        normalized_schema = dict(schema)
-        normalized_schema.setdefault("name", name)
-        normalized_schema.setdefault("description", description or name)
+        source_schema = dict(schema)
+        if "parameters" not in source_schema and source_schema.get("type") == "object":
+            # Accept the JSON Schema shorthand used by internal tools. Without
+            # this conversion their declared properties were retained only as
+            # inert top-level metadata while models received an empty
+            # parameters schema.
+            normalized_schema = {
+                "name": name,
+                "description": description or name,
+                "parameters": source_schema,
+            }
+        else:
+            normalized_schema = source_schema
+            normalized_schema.setdefault("name", name)
+            normalized_schema.setdefault("description", description or name)
         normalized_schema["parameters"] = normalize_parameters_schema(
             normalized_schema.get("parameters", {"type": "object", "properties": {}})
         )

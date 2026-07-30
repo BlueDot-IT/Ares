@@ -107,9 +107,70 @@ class RuntimeFlowTests(unittest.TestCase):
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.result["summary"], "small summary")
+        self.assertEqual(result.result["evidence_tool_call_id"], calls[0]["id"])
         self.assertNotIn("stdout", result.result)
         self.assertEqual(calls[0]["tool"], "echo_tool")
         self.assertEqual(calls[0]["status"], "ok")
+
+    def test_dispatcher_normalizes_successful_nmap_evidence(self):
+        from ares.agent.dispatcher import ToolDispatcher
+        from ares.agent.runtime import ToolCall
+        from ares.policy.context import PolicyContext
+        from ares.state.db import StateDB
+        from ares.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register(
+            name="nmap_basic",
+            toolset="unit",
+            risk="active",
+            schema={
+                "name": "nmap_basic",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"target": {"type": "string"}},
+                    "required": ["target"],
+                },
+            },
+            handler=lambda args, **_: {
+                "stdout": (
+                    "Nmap scan report for localhost (127.0.0.1)\n"
+                    "PORT    STATE SERVICE VERSION\n"
+                    "25/tcp  open  smtp    Postfix smtpd\n"
+                    "443/tcp open  https   nginx\n"
+                )
+            },
+        )
+        db = StateDB(Path(self.tmpdir) / "state.db")
+        sid = db.create_session(
+            prompt="task",
+            target="127.0.0.1",
+            model="unit",
+            mode="safe-active",
+        )
+        dispatcher = ToolDispatcher(
+            registry=registry,
+            policy=PolicyContext(max_risk="active"),
+            recorder=db,
+            session_id=sid,
+        )
+
+        result = dispatcher.dispatch(
+            ToolCall(name="nmap_basic", args={"target": "127.0.0.1"})
+        )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(db.list_hosts(sid)[0]["address"], "127.0.0.1")
+        self.assertEqual(
+            [
+                (service["port"], service["service"], service["product"])
+                for service in db.list_services(sid)
+            ],
+            [
+                (25, "smtp", "Postfix smtpd"),
+                (443, "https", "nginx"),
+            ],
+        )
 
     def setUp(self):
         import tempfile

@@ -169,6 +169,18 @@ class EvidenceMemoryToolsTests(unittest.TestCase):
             self.assertIsNotNone(entry)
             self.assertEqual(entry.risk, "passive")
             self.assertEqual(entry.toolset, "evidence")
+            self.assertEqual(
+                entry.schema["parameters"]["required"],
+                ["tool_call_id"],
+            )
+            self.assertIn(
+                "tool_call_id",
+                entry.schema["parameters"]["properties"],
+            )
+            self.assertNotIn(
+                "session_id",
+                entry.schema["parameters"]["properties"],
+            )
 
             result = entry.handler({"tool_call_id": tool_call_id, "excerpt_chars": 1000})
             self.assertEqual(result["tool_call_id"], tool_call_id)
