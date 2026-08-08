@@ -1,0 +1,71 @@
+name: Feature request
+description: Propose an operator capability or product improvement
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Operator problem
+      description: Describe the concrete workflow or product problem. Avoid starting with an implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain what Ares should do and what the operator should see.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Product surface
+      options:
+        - CLI
+        - TUI
+        - Dashboard
+        - Gateway or API
+        - Runtime or dispatcher
+        - Mission system
+        - Governed autonomous reconnaissance
+        - Authorized operator validation
+        - Evidence, state, or reporting
+        - Packaging or release engineering
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Security and authority impact
+      description: State whether the proposal changes model authority, tool exposure, target construction, scope, risk, approvals, evidence provenance, gateway access, or release trust.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable conditions that would make the feature complete.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: This request is for authorized security work and does not require bypassing Ares policy controls.
+          required: true
+        - label: I reviewed the support boundary and searched existing issues.
+          required: true

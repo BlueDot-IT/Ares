@@ -1,46 +1,139 @@
-# ARES Mission CLI Subcommands
+# Ares Mission CLI
 
-ARES includes command-line tools for defining, executing, and listing swarm testing missions.
+Ares missions provide repeatable, policy-bound assessment workflows. A mission can use a named deterministic profile, an explicit operator task graph, or the governed autonomous reconnaissance profile.
 
 ## Commands
 
-### Run a Swarm Mission
 ```bash
-ares mission run \
-  --profile [secrets-audit|dependency-audit|source-code-audit|report-only|authorized-operator-validation] \
-  --target <target-directory> \
-  [--allowed-path <allowed-path>] \
-  [--forbidden-path <forbidden-path>] \
-  [--allowed-host <host-or-cidr>] \
-  [--forbidden-action <phrase>] \
-  [--max-risk <risk>] \
-  [--mission-id <engagement-id>] \
-  [--initial-tasks <tasks.json>] \
-  [--ghostmcp-policy <engagement-policy.json>] \
-  [--approve-high-risk] \
-  [--approval-receipts <receipts.json>] \
-  [--out <markdown-report-path>] \
-  [--dry-run]
+ares mission run [options]
+ares mission list
+ares mission report <mission-id> --out <report-path>
 ```
-*(Alternatively, you can use the direct app subcommand `ares mission-run`)*
 
-Options:
-- `--profile`: Specify the profile to use (default: `secrets-audit`).
-- `--target`: The target path to analyze (required).
-- `--allowed-path`: Add one or more paths that are allowed in the validation scope.
-- `--forbidden-path`: Add one or more paths that must be excluded (e.g. `.git`, `.env`).
-- `--allowed-host`: Add an exact authorized host, domain, or CIDR.
-- `--forbidden-action`: Reject tasks containing a prohibited action phrase.
-- `--max-risk`: Set the mission risk ceiling. The default is `scan`.
-- `--mission-id`: Supply a stable engagement identifier used by both Ares and GhostMCP.
-- `--initial-tasks`: Load an explicit JSON task graph. This is mandatory for the advanced profile.
-- `--ghostmcp-policy`: Use a mode-`0600` GhostMCP 1.0 engagement policy whose engagement key matches `--mission-id`.
-- `--approve-high-risk`: Give the dispatcher an explicit operator approval for exploit and post-exploitation calls. GhostMCP authorization provenance is still independently required.
-- `--approval-receipts`: Load immutable, single-use, mode-`0600` receipts. Each receipt binds an approver and expiry to the exact mission, task, role, tool, target, arguments, and supporting evidence digest.
-- `--out`: Path to write the markdown report (defaults to `~/.ares/reports/mission-report-<id>.md`).
-- `--dry-run`: Evaluate task validation and print the execution plan without executing anything.
+Compatibility aliases remain available:
 
-ARES never infers an advanced task graph. A typical validation sequence is:
+```bash
+ares mission-run
+ares mission-list
+ares mission-report
+```
+
+## Common run options
+
+```text
+--profile <profile>
+--target <target>
+--allowed-path <path>
+--forbidden-path <path>
+--allowed-host <host-or-cidr>
+--forbidden-action <phrase>
+--max-risk <risk>
+--mission-id <engagement-id>
+--initial-tasks <tasks.json>
+--ghostmcp-policy <engagement-policy.json>
+--approval-receipts <receipts.json>
+--approve-high-risk
+--autonomous
+--max-tasks <count>
+--ports <port-scope>
+--out <report.md>
+--dry-run
+```
+
+Options that accept multiple values may be supplied more than once.
+
+## Deterministic profiles
+
+Supported deterministic profiles include:
+
+- `secrets-audit`
+- `dependency-audit`
+- `source-code-audit`
+- `report-only`
+- `authorized-operator-validation`
+
+Example source assessment:
+
+```bash
+ares mission run \
+  --profile source-code-audit \
+  --target /srv/authorized-project \
+  --allowed-path /srv/authorized-project \
+  --forbidden-path /srv/authorized-project/.git \
+  --max-risk scan \
+  --out source-audit.md
+```
+
+A deterministic profile uses fixed role and tool contracts. It does not ask a model to invent the task graph.
+
+## Governed autonomous reconnaissance
+
+The `autonomous-recon` profile supports model-prioritized passive and safe-active reconnaissance while keeping tool and target construction inside Ares.
+
+```bash
+ares mission run \
+  --profile autonomous-recon \
+  --target 192.0.2.10 \
+  --allowed-host 192.0.2.10 \
+  --max-risk active \
+  --ports 22,80,443,8000 \
+  --max-tasks 16 \
+  --autonomous \
+  --out autonomous-recon.md
+```
+
+Required controls:
+
+- `--profile autonomous-recon`
+- at least one explicit `--allowed-host`
+- `--max-risk active`
+- a valid TCP port list or range covering no more than 4096 ports
+- a positive `--max-tasks` budget
+
+The planner receives no callable tools. It selects only exact coverage IDs from the persistent ledger. Ares compiles the selected ID into a fixed capability, tool, target, and argument set before mission and dispatcher validation.
+
+Each graph node, graph edge, coverage decision, planner cycle, tool result, bounded recovery attempt, finding hypothesis, and limitation is persisted for resume and reporting.
+
+Autonomous reconnaissance does not perform exploitation, authentication attempts, persistence, exfiltration, or arbitrary command execution.
+
+Preview the governed setup without dispatching a tool:
+
+```bash
+ares mission run \
+  --profile autonomous-recon \
+  --target 192.0.2.10 \
+  --allowed-host 192.0.2.10 \
+  --max-risk active \
+  --ports 80,443 \
+  --max-tasks 8 \
+  --autonomous \
+  --dry-run
+```
+
+## Authorized operator validation
+
+The advanced validation path requires an explicit operator task graph. Ares never infers advanced tasks and the model never selects them.
+
+A typical sequence has two stages.
+
+### 1. Acquire evidence
+
+Run a recon-only graph with a stable mission ID. Successful, non-empty tool-call IDs from this stage can be referenced by later validation tasks.
+
+```bash
+ares mission run \
+  --profile authorized-operator-validation \
+  --mission-id engagement-2026-001 \
+  --target 192.0.2.10 \
+  --allowed-host 192.0.2.10 \
+  --max-risk active \
+  --initial-tasks recon-tasks.json \
+  --ghostmcp-policy engagement-policy.json
+```
+
+### 2. Bind approval to the exact advanced task
+
+The advanced task JSON must include `supporting_evidence_tool_call_ids` from the same mission and target. Run a dry run to obtain the exact approval digest:
 
 ```bash
 ares mission run \
@@ -49,53 +142,54 @@ ares mission run \
   --target 192.0.2.10 \
   --allowed-host 192.0.2.10 \
   --max-risk post-exploitation \
-  --initial-tasks tasks.json \
+  --initial-tasks validation-tasks.json \
   --dry-run
+```
 
+Issue a mode-`0600` receipt bound to the exact mission, task, role, tool, target, arguments, supporting-evidence digest, approver, and expiry. Add the receipt ID to the task and execute:
+
+```bash
 ares mission run \
   --profile authorized-operator-validation \
   --mission-id engagement-2026-001 \
   --target 192.0.2.10 \
   --allowed-host 192.0.2.10 \
   --max-risk post-exploitation \
-  --initial-tasks tasks.json \
+  --initial-tasks validation-tasks.json \
   --ghostmcp-policy engagement-policy.json \
   --approval-receipts approval-receipts.json \
-  --approve-high-risk
+  --approve-high-risk \
+  --out validation-report.md
 ```
 
-The GhostMCP policy remains the authoritative effective-argument boundary.
-Ares supplies the mission ID itself and overwrites any engagement identity
-included in task arguments.
+The receipt is consumed before the single dispatch attempt and cannot be reused or replaced. Failed, empty, cross-target, cross-mission, expired, replayed, or contract-mismatched evidence and receipts fail closed.
 
-Advanced task JSON must provide `supporting_evidence_tool_call_ids` from the
-same mission. It may omit `approval_receipt_id` for the first `--dry-run`;
-the dry run prints the exact approval digest. Before execution, add the issued
-receipt ID to the task and provide a receipt file containing that digest.
-Receipts are consumed before the single dispatch attempt and cannot be reused
-or replaced. The model never selects advanced-role tasks.
+The GhostMCP policy remains the authoritative effective-argument boundary for protected GhostMCP operations. Ares supplies the mission ID and overwrites any engagement identity included in task arguments.
 
-Evidence acquisition and advanced validation are intentionally staged. First,
-run an explicit recon-only task graph under
-`authorized-operator-validation` with a stable `--mission-id`; this does not
-require `--approve-high-risk` or a receipt file. Then reference the successful,
-non-empty, same-target tool-call evidence IDs in an advanced task, dry-run that
-exact task to obtain its digest, issue the receipt, and execute the second graph
-with the same mission ID. Failed, empty, cross-target, and cross-mission calls
-are rejected as approval evidence.
+## Bounded recovery and findings
 
-### List Missions
+Reconnaissance capabilities may use one trusted equivalent recovery attempt when the primary operation fails. Recovery tools and arguments come from an Ares-owned catalog, not model output. HTTP 404 responses are preserved as evidence rather than treated as a failed probe.
+
+Findings progress through:
+
+```text
+observed -> hypothesized -> corroborated -> safely_validated -> reported
+```
+
+Product and version banners may create hypotheses but do not prove vulnerability impact. Safe validation requires independent behavioral evidence.
+
+## Resume and reports
+
+Use a stable `--mission-id` to resume a compatible mission. Resumed missions remain bound to their original profile, scope, port scope, and execution metadata.
+
+List stored missions:
+
 ```bash
 ares mission list
 ```
-*(Or `ares mission-list`)*
 
-Prints a tabular list of all swarm testing missions stored in the database.
+Render an existing mission report:
 
-### Retrieve Mission Report
 ```bash
-ares mission report <mission-id> --out <report-path>
+ares mission report engagement-2026-001 --out report.md
 ```
-*(Or `ares mission-report`)*
-
-Retrieves the recorded details of a completed mission and generates the Markdown report at the specified path.

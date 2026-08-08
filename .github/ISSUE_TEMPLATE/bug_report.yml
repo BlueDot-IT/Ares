@@ -1,0 +1,100 @@
+name: Bug report
+description: Report a reproducible defect in a supported Ares surface
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report unresolved vulnerabilities here. Use private vulnerability reporting instead. Remove credentials, customer data, private targets, engagement policies, approval receipts, and raw evidence.
+
+  - type: dropdown
+    id: version
+    attributes:
+      label: Ares version
+      options:
+        - 1.1.x
+        - 1.0.x
+        - main
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: exact-version
+    attributes:
+      label: Exact version or commit
+      placeholder: "ares --version or git rev-parse HEAD"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and Python version
+      placeholder: "Debian 13, Python 3.12.8"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation method
+      options:
+        - pipx
+        - uv tool
+        - virtual environment
+        - GitHub release wheel
+        - editable source install
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command or API request
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal authorized reproduction
+      description: Use a local, synthetic, or explicitly authorized target. Explain all setup needed to reproduce.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Paste reviewed `ares doctor --json` output or relevant support-bundle fields. Do not paste credentials or engagement evidence.
+      render: json
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: The reproduction uses a local, synthetic, or explicitly authorized target.
+          required: true
+        - label: I removed credentials, private customer data, engagement policies, approval receipts, and raw evidence.
+          required: true
+        - label: I searched existing issues and reviewed SUPPORT.md and the troubleshooting guide.
+          required: true

@@ -12,10 +12,12 @@ class AresMigrationTests(unittest.TestCase):
         self.assertTrue((SRC / "ares" / "run.py").exists())
         self.assertFalse((SRC / "tiamat").exists(), "legacy src/tiamat package should be removed")
 
-    def test_pyproject_uses_ares_only(self):
+    def test_pyproject_uses_product_distribution_and_ares_runtime_identity(self):
         content = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn('name = "ares"', content)
+        self.assertIn('name = "bluedot-ares"', content)
         self.assertIn('ares = "ares.cli:app"', content)
+        self.assertIn('include = ["ares*", "lib*"]', content)
+        self.assertNotIn('name = "ares"', content)
         self.assertNotIn('tiamat =', content)
         self.assertNotIn('tiamat*', content)
 

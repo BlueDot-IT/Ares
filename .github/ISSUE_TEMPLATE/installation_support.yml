@@ -1,0 +1,92 @@
+name: Installation or support request
+description: Get help with installation, onboarding, configuration, or supported operator surfaces
+title: "[Support]: "
+labels: ["support", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Review INSTALL.md, SUPPORT.md, and docs/troubleshooting.md first. Do not include secrets, customer data, raw engagement evidence, approval receipts, or engagement policies.
+
+  - type: input
+    id: version
+    attributes:
+      label: Ares version
+      placeholder: "Output of ares --version"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and Python version
+      placeholder: "Kali Linux, Python 3.12.8"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation method
+      options:
+        - pipx
+        - uv tool
+        - virtual environment
+        - GitHub release wheel
+        - editable source install
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Package installation or upgrade
+        - Onboarding or model configuration
+        - OAuth or provider authentication
+        - CLI
+        - TUI
+        - Dashboard
+        - Gateway or pairing
+        - Mission execution
+        - External tool availability
+        - Reports or state
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Commands run
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Reviewed diagnostics
+      description: Paste redacted `ares doctor --json` output or relevant fields from `ares support-bundle`.
+      render: json
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I verified that the installed distribution is `bluedot-ares`, not the unrelated PyPI project named `ares`.
+          required: true
+        - label: I removed credentials, private targets, customer data, engagement evidence, policies, and approval receipts.
+          required: true
+        - label: I reviewed the installation and troubleshooting documentation.
+          required: true

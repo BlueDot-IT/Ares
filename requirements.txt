@@ -1,5 +1,3 @@
-pyside6
-openai
-jsonschema
-typer
+# Contributor convenience file. End users should install the bluedot-ares distribution.
+-e .[dev,anthropic,gemini,ghostmcp]
 -e vendor/ghostmcp

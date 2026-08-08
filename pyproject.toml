@@ -3,9 +3,9 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ares"
-version = "1.0.1"
-description = "Ares autonomous security testing suite for authorized engagements"
+name = "bluedot-ares"
+version = "1.1.0"
+description = "Ares operator-supervised security assessment runtime for authorized engagements"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{name = "Jason O'Neal"}]
@@ -34,14 +34,17 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/BlueDot-IT/Ares"
+Documentation = "https://github.com/BlueDot-IT/Ares#readme"
 Repository = "https://github.com/BlueDot-IT/Ares"
 Issues = "https://github.com/BlueDot-IT/Ares/issues"
+Changelog = "https://github.com/BlueDot-IT/Ares/blob/main/CHANGELOG.md"
+Security = "https://github.com/BlueDot-IT/Ares/security/policy"
 
 [project.optional-dependencies]
 anthropic = ["anthropic"]
 gemini = ["google-auth", "google-auth-oauthlib", "google-genai"]
 ghostmcp = ["ghostmcp-server==0.2.0", "mcp>=1.28.1"]
-dev = ["pytest", "build"]
+dev = ["pytest", "build", "twine"]
 
 [project.scripts]
 ares = "ares.cli:app"

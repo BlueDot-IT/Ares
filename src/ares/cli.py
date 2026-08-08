@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import platform
 import secrets
+import sys
 from pathlib import Path
 from typing import Any
 from urllib import error as urllib_error
@@ -44,10 +46,10 @@ from ares.run import (
 from ares.state.db import StateDB
 from ares.training.export import export_training_data
 
-app = typer.Typer(help=f"{APP_NAME} autonomous testing suite", invoke_without_command=True)
+app = typer.Typer(help=f"{APP_NAME} operator-supervised security assessment runtime", invoke_without_command=True)
 auth_app = typer.Typer(help="Manage cached OAuth credentials for supported model providers.")
 app.add_typer(auth_app, name="auth")
-mission_app = typer.Typer(help="Swarm testing missions")
+mission_app = typer.Typer(help="Policy-bound assessment missions")
 app.add_typer(mission_app, name="mission")
 
 
@@ -73,12 +75,60 @@ def main(
         launch_tui(refresh_interval=0.5, yolo_mode=False)
 
 
+def _product_doctor_snapshot() -> dict[str, Any]:
+    return {
+        "ares_version": __version__,
+        "distribution": "bluedot-ares",
+        **build_doctor_snapshot(registry=build_registry()),
+    }
+
+
 @app.command("doctor")
-def doctor() -> None:
+def doctor(
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON diagnostics.",
+    ),
+) -> None:
     """Show runtime configuration and tool registry status."""
-    snapshot = build_doctor_snapshot(registry=build_registry())
+    snapshot = _product_doctor_snapshot()
+    if as_json:
+        typer.echo(json.dumps(snapshot, indent=2, sort_keys=True))
+        return
     for key, value in snapshot.items():
         typer.echo(f"{key}: {value}")
+
+
+@app.command("support-bundle")
+def support_bundle(
+    out: str = typer.Option(
+        "ares-support-bundle.json",
+        "--out",
+        "-o",
+        help="Path for the redacted JSON support bundle.",
+    ),
+) -> None:
+    """Write redacted runtime diagnostics without credentials or engagement data."""
+    output_path = Path(out).expanduser()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "redaction": "Credentials and engagement records are excluded.",
+        "runtime": {
+            "ares_version": __version__,
+            "distribution": "bluedot-ares",
+            "python_version": sys.version.split()[0],
+            "platform": platform.platform(),
+        },
+        "doctor": _product_doctor_snapshot(),
+    }
+    write_private_text(
+        output_path,
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        private_parent=False,
+    )
+    typer.echo(f"Support bundle written to: {output_path.resolve()}")
 
 
 @app.command("model")
@@ -957,6 +1007,11 @@ def mission_run_sub(
     initial_tasks_file: str | None = typer.Option(None, "--initial-tasks", help="Explicit JSON task graph"),
     ghostmcp_policy_file: str | None = typer.Option(None, "--ghostmcp-policy", help="Mode-0600 GhostMCP engagement policy"),
     approve_high_risk: bool = typer.Option(False, "--approve-high-risk", help="Approve exploit/post-exploitation tasks in the supplied graph"),
+    approval_receipts_file: str | None = typer.Option(
+        None,
+        "--approval-receipts",
+        help="Mode-0600 JSON approval receipts bound to advanced tasks",
+    ),
     autonomous: bool = typer.Option(False, "--autonomous", help="Use governed model planning with the autonomous-recon profile"),
     max_tasks: int = typer.Option(20, "--max-tasks", min=1, help="Maximum autonomous tool tasks"),
     ports: str = typer.Option("1-1000", "--ports", help="Autonomous TCP port scope, maximum 4096 ports"),
@@ -976,6 +1031,7 @@ def mission_run_sub(
         initial_tasks_file=initial_tasks_file,
         ghostmcp_policy_file=ghostmcp_policy_file,
         approve_high_risk=approve_high_risk,
+        approval_receipts_file=approval_receipts_file,
         autonomous=autonomous,
         max_tasks=max_tasks,
         ports=ports,

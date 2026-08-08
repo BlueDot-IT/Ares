@@ -19,7 +19,7 @@ env:
 
 jobs:
   release:
-    name: Build and attest release artifact
+    name: Build release payload
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -37,26 +37,76 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          python -m pip install --upgrade pip build
+          python -m pip install --upgrade pip build twine cyclonedx-bom==7.3.0
           python -m pip install -e '.[dev,anthropic,gemini,ghostmcp]' -e vendor/ghostmcp
 
-      - name: Verify release
-        run: python -m pytest tests -q
-
-      - name: Build distributions
-        run: python -m build
-
-      - name: Write release metadata and checksums
+      - name: Verify release identity
         run: |
-          sha256sum dist/* > dist/SHA256SUMS
-          printf '{"project":"ares","version":"%s","commit":"%s","ref":"%s"}\n' \
-            "${GITHUB_REF_NAME}" "${GITHUB_SHA}" "${GITHUB_REF}" > dist/release-metadata.json
+          PACKAGE_NAME="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["name"])')"
+          PACKAGE_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "$PACKAGE_NAME" = "bluedot-ares"
+          test "v${PACKAGE_VERSION}" = "${GITHUB_REF_NAME}"
+          test "$(python -c 'import ares; print(ares.__version__)')" = "$PACKAGE_VERSION"
 
-      - name: Upload release artifact
+      - name: Verify source
+        run: |
+          python -m pytest tests -q
+          python -m compileall -q src/ares
+
+      - name: Build and validate distributions
+        run: |
+          rm -rf dist build src/*.egg-info
+          python -m build
+          python -m twine check dist/*
+
+      - name: Smoke-test installed wheel
+        run: |
+          python -m venv /tmp/ares-release-smoke
+          . /tmp/ares-release-smoke/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          test "$(ares --version)" = "${GITHUB_REF_NAME#v}"
+          ares doctor --json | python -m json.tool >/dev/null
+          python -c "from typer.main import get_command; from ares.cli import app; run = get_command(app).commands['mission'].commands['run']; assert any('--approval-receipts' in getattr(param, 'opts', []) for param in run.params)"
+
+      - name: Generate SBOM, metadata, and checksums
+        run: |
+          cyclonedx-py environment \
+            --output-format JSON \
+            --output-reproducible \
+            --output-file "dist/bluedot-ares-${GITHUB_REF_NAME}.cdx.json" \
+            /tmp/ares-release-smoke/bin/python
+          python - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          Path("dist/release-metadata.json").write_text(
+              json.dumps(
+                  {
+                      "project": project["name"],
+                      "product": "Ares",
+                      "version": project["version"],
+                      "tag": os.environ["GITHUB_REF_NAME"],
+                      "commit": os.environ["GITHUB_SHA"],
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          (
+            cd dist
+            sha256sum *.whl *.tar.gz *.cdx.json release-metadata.json > SHA256SUMS
+          )
+
+      - name: Upload release payload
         uses: actions/upload-artifact@v4
         with:
           name: ares-${{ github.ref_name }}-${{ github.sha }}
           path: dist/
           if-no-files-found: error
           retention-days: 30
-

@@ -4,16 +4,17 @@ Ares is intended only for authorized security testing. Do not use it against sys
 
 ## Supported versions
 
-| Version | Supported |
-|---------|-----------|
-| 1.x | Yes |
-| 0.x beta | No, except for upgrade guidance |
+| Version | Support |
+| --- | --- |
+| 1.1.x | Active security and compatibility support |
+| 1.0.x | Critical security fixes and upgrade guidance |
+| 0.x beta | Unsupported except for migration guidance |
 
 ## Reporting vulnerabilities
 
-Report security issues privately by opening a private advisory or contacting the maintainer directly. Do not publish working exploit details for unresolved issues.
+Use GitHub private vulnerability reporting for `BlueDot-IT/Ares`. Do not open a public issue for an unresolved vulnerability.
 
-A useful report should include:
+A useful report includes:
 
 - affected version or commit
 - affected component
@@ -21,14 +22,33 @@ A useful report should include:
 - expected behavior
 - actual behavior
 - impact assessment
-- any logs with secrets removed
+- proposed remediation, when known
+- logs with all secrets and customer data removed
 
-## Handling secrets
+Do not publish working exploit details before a fix and coordinated disclosure decision are available.
 
-Do not include API keys, OAuth tokens, bearer tokens, passwords, private hostnames, or customer data in public issues. Redact logs before attaching them.
+## Handling secrets and evidence
 
-## Scope notes
+Never include API keys, OAuth tokens, bearer tokens, passwords, private hostnames, approval receipts, engagement policies, customer data, or raw engagement evidence in public issues, pull requests, or discussion threads.
 
-Security issues in Ares include bypasses of scope enforcement, risk policy, approval gates, gateway authentication, gateway allowlists, secret redaction, memory isolation, or training export filters.
+Use `ares support-bundle` for diagnostics. The generated bundle excludes credentials and engagement evidence by design, but operators must still review it before sharing.
 
-Issues in third-party tools integrated through Ares should also be reported upstream when appropriate.
+## Security issue scope
+
+Security issues in Ares include bypasses or weaknesses involving:
+
+- target, path, host, CIDR, or engagement scope
+- risk ceilings and rules of engagement
+- dispatcher or mission approval gates
+- approval receipt binding, expiry, replay prevention, or evidence provenance
+- gateway authentication, pairing, session provenance, and CIDR allowlists
+- tool schema isolation and effective-argument validation
+- cross-target or cross-mission evidence recall
+- secret redaction and training export filters
+- release provenance, artifact integrity, and package identity
+
+Issues in third-party tools integrated through Ares should also be reported upstream when appropriate. An Ares report is still warranted when the integration weakens or misrepresents the third-party boundary.
+
+## Disclosure expectations
+
+The maintainers will acknowledge a complete private report, assess severity and affected versions, coordinate remediation, and publish release notes or an advisory when appropriate. Timing depends on reproducibility, impact, and dependency coordination.

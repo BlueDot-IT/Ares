@@ -2,6 +2,43 @@
 
 All notable changes to Ares are documented here.
 
+## 1.1.0 - Unreleased
+
+### Added
+
+- Added governed autonomous reconnaissance with a persistent attack-surface graph, explicit coverage ledger, and model planning restricted to exact Ares-issued coverage IDs.
+- Added deterministic compilation from planner decisions into fixed tools, targets, and arguments before policy validation.
+- Added the finding lifecycle `observed -> hypothesized -> corroborated -> safely_validated -> reported` with supporting and contradictory evidence, reproduction steps, and operator-visible rationales.
+- Added bounded, single-attempt recovery for HTTP, TLS, and service fingerprint failures with persisted provenance and shared task-budget accounting.
+- Added evidence-bound, digest-bound, expiring, single-use approval receipts for advanced operator validation.
+- Added `ares doctor --json` for machine-readable preflight diagnostics.
+- Added `ares support-bundle` for redacted runtime diagnostics without credentials or engagement evidence.
+- Added end-user installation, quickstart, troubleshooting, architecture, support, contribution, and release-verification documentation.
+- Added structured GitHub issue forms and a pull request checklist.
+
+### Changed
+
+- Changed the Python distribution name from `ares` to `bluedot-ares` while retaining the `ares` import package and command names.
+- Bumped the product and runtime version to `1.1.0`.
+- Reworked the README around operator outcomes, supported execution paths, and explicit safety boundaries.
+- Promoted governed autonomous reconnaissance and deterministic authorized operator validation into the documented 1.1 support boundary.
+- Made wheel discovery distribution-name agnostic throughout CI and release smoke tests.
+- Updated the official release workflow to generate checksums, a CycloneDX SBOM, release metadata, GitHub provenance attestations, and SBOM attestations.
+- Added an optional PyPI Trusted Publishing job gated by the `PYPI_PUBLISH_ENABLED` repository variable and the `pypi` GitHub environment.
+
+### Fixed
+
+- Fixed the nested `ares mission run` command so `--approval-receipts` is accepted and forwarded to advanced validation.
+- Removed the stale PySide6 dependency from `requirements.txt` after the legacy GUI removal.
+- Corrected documentation that still described model-planned reconnaissance as an unimplemented fail-closed placeholder.
+- Corrected mission CLI documentation to include `autonomous-recon`, `--autonomous`, `--max-tasks`, `--ports`, and approval receipts.
+
+### Security
+
+- Kept model planning limited to reconnaissance coverage selection. The model cannot invent tools, targets, arguments, exploitation tasks, or post-exploitation tasks.
+- Kept advanced validation dependent on same-mission evidence, exact task contracts, GhostMCP policy where applicable, immutable approval receipts, and out-of-model approval.
+- Added release checksums, SBOM generation, build provenance, and attestation verification guidance without adding a long-lived package publishing token.
+
 ## 1.0.1 - Security and OAuth hardening
 
 ### Fixed
@@ -73,4 +110,4 @@ Ares v1.0.0 is the first stable release of the operator-supervised Ares security
 
 ### Release validation
 
-Before tagging, run the final local gate from `docs/v1-release-checklist.md` on a clean checkout.
+Before tagging, run the applicable release checklist from a clean checkout.
