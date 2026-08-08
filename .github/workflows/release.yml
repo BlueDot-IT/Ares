@@ -72,33 +72,45 @@ jobs:
           ares route --target 127.0.0.1 --prompt "safe local smoke test"
           ares training --out /tmp/ares-sft-smoke.jsonl --min-status final_response
 
-      - name: Generate CycloneDX SBOM
+      - name: Generate SBOM, release metadata, and checksums
         run: |
           cyclonedx-py environment \
             --output-format JSON \
             --output-reproducible \
             --output-file "dist/bluedot-ares-${GITHUB_REF_NAME}.cdx.json" \
             /tmp/ares-release-smoke/bin/python
-
-      - name: Write release metadata and checksums
-        run: |
           python - <<'PY'
           import json
           import os
           import tomllib
+          import uuid
           from pathlib import Path
 
+          release_tag = os.environ["GITHUB_REF_NAME"]
+          sbom_path = Path(f"dist/bluedot-ares-{release_tag}.cdx.json")
+          sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+          if sbom.get("bomFormat") != "CycloneDX" or not sbom.get("specVersion"):
+              raise SystemExit("generated SBOM is not valid CycloneDX JSON")
+          sbom["serialNumber"] = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, f'https://github.com/BlueDot-IT/Ares/releases/tag/{release_tag}')}"
+          sbom_path.write_text(
+              json.dumps(sbom, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
           project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
-          payload = {
-              "project": project["name"],
-              "product": "Ares",
-              "version": project["version"],
-              "tag": os.environ["GITHUB_REF_NAME"],
-              "commit": os.environ["GITHUB_SHA"],
-              "repository": os.environ["GITHUB_REPOSITORY"],
-          }
           Path("dist/release-metadata.json").write_text(
-              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              json.dumps(
+                  {
+                      "project": project["name"],
+                      "product": "Ares",
+                      "version": project["version"],
+                      "tag": release_tag,
+                      "commit": os.environ["GITHUB_SHA"],
+                      "repository": os.environ["GITHUB_REPOSITORY"],
+                  },
+                  indent=2,
+                  sort_keys=True,
+              ) + "\n",
               encoding="utf-8",
           )
           PY
@@ -106,6 +118,7 @@ jobs:
           (
             cd dist
             sha256sum *.whl *.tar.gz *.cdx.json release-metadata.json > SHA256SUMS
+            sha256sum -c SHA256SUMS
           )
 
       - name: Attest build provenance

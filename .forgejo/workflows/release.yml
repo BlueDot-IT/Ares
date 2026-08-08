@@ -80,7 +80,19 @@ jobs:
           import json
           import os
           import tomllib
+          import uuid
           from pathlib import Path
+
+          release_tag = os.environ["GITHUB_REF_NAME"]
+          sbom_path = Path(f"dist/bluedot-ares-{release_tag}.cdx.json")
+          sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+          if sbom.get("bomFormat") != "CycloneDX" or not sbom.get("specVersion"):
+              raise SystemExit("generated SBOM is not valid CycloneDX JSON")
+          sbom["serialNumber"] = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, f'https://github.com/BlueDot-IT/Ares/releases/tag/{release_tag}')}"
+          sbom_path.write_text(
+              json.dumps(sbom, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
 
           project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
           Path("dist/release-metadata.json").write_text(
@@ -89,7 +101,7 @@ jobs:
                       "project": project["name"],
                       "product": "Ares",
                       "version": project["version"],
-                      "tag": os.environ["GITHUB_REF_NAME"],
+                      "tag": release_tag,
                       "commit": os.environ["GITHUB_SHA"],
                   },
                   indent=2,
@@ -101,6 +113,7 @@ jobs:
           (
             cd dist
             sha256sum *.whl *.tar.gz *.cdx.json release-metadata.json > SHA256SUMS
+            sha256sum -c SHA256SUMS
           )
 
       - name: Upload release payload
