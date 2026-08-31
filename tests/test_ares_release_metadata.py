@@ -45,13 +45,30 @@ class AresReleaseMetadataTests(unittest.TestCase):
 
     def test_release_workflow_binds_tag_to_protected_main(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        _, verification_and_release = workflow.split(
+            "\n  verify-tag:\n",
+            maxsplit=1,
+        )
+        verification_job, release_and_publish = verification_and_release.split(
+            "\n  release:\n",
+            maxsplit=1,
+        )
+        release_job, _ = release_and_publish.split(
+            "\n  publish-pypi:\n",
+            maxsplit=1,
+        )
 
-        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn("permissions:\n      contents: read", verification_job)
+        self.assertIn("fetch-depth: 0", verification_job)
+        self.assertIn("persist-credentials: false", verification_job)
         self.assertIn(
             'git merge-base --is-ancestor "${GITHUB_SHA}" '
             "refs/remotes/origin/main",
-            workflow,
+            verification_job,
         )
+        self.assertIn("needs: verify-tag", release_job)
+        self.assertNotIn("git merge-base --is-ancestor", release_job)
+        self.assertIn("persist-credentials: false", release_job)
 
     def test_release_workflow_pins_every_external_action(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
