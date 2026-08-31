@@ -230,3 +230,39 @@ def test_deterministic_paths_finish_blocked_sessions_without_operator_runs(
     assert state_db.list_mission_tasks(mission.id)[0]["status"] == "blocked"
     assert state_db.get_mission(mission.id)["status"] == "blocked"
     assert state_db.list_sessions()[0]["status"] == "blocked"
+
+
+@pytest.mark.parametrize("runner", RUNNERS)
+def test_deterministic_paths_do_not_strand_running_task_when_run_insert_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runner: str,
+) -> None:
+    state_db = StateDB(tmp_path / "state.db")
+    mission = _mission(tmp_path, runner, "operator-insert-error")
+    task = _scan_task(mission)
+
+    def fail_operator_run(**_kwargs):
+        raise RuntimeError("operator run insert failed")
+
+    monkeypatch.setattr(
+        state_db,
+        "record_mission_operator_run",
+        fail_operator_run,
+    )
+
+    with pytest.raises(RuntimeError, match="operator run insert failed"):
+        _run(
+            runner,
+            coordinator=MissionCoordinator(mission),
+            registry=_registry(lambda _args, **_kwargs: {"findings": []}),
+            state_db=state_db,
+            tasks=[task],
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+        )
+
+    assert _operator_runs(state_db) == []
+    assert state_db.list_mission_tasks(mission.id)[0]["status"] == "pending"
+    assert state_db.get_mission(mission.id)["status"] == "failed"
+    assert state_db.list_sessions()[0]["status"] == "error"

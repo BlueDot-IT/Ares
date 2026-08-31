@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import sys
@@ -281,6 +282,53 @@ class OpenAIOAuthFlowTests(unittest.TestCase):
         self.assertIn("offline_access", params["scope"][0])
         self.assertEqual(params["codex_cli_simplified_flow"], ["true"])
         self.assertEqual(params["originator"], ["ares"])
+
+    def test_login_prints_only_the_browser_authorization_request(self):
+        flow = OpenAIOAuthFlow()
+        browser_url: list[str] = []
+        output = io.StringIO()
+        sentinel = OAuthTokenCacheEntry(
+            provider="openai",
+            access_token="returned-access-token",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            refresh_token="returned-refresh-token",
+            metadata={"id_token": "returned-id-token"},
+        )
+
+        with (
+            patch.object(flow, "_generate_code_verifier", return_value="private-verifier"),
+            patch.object(flow, "_open_browser", side_effect=browser_url.append),
+            patch.object(flow, "_receive_callback", return_value="private-code"),
+            patch.object(flow, "_exchange_code", return_value=sentinel),
+            patch("sys.stdout", output),
+        ):
+            result = flow.login(home=Path("/tmp"))
+
+        printed_urls = [
+            line for line in output.getvalue().splitlines() if line.startswith("https://")
+        ]
+        self.assertEqual(printed_urls, browser_url)
+        self.assertIs(result, sentinel)
+        self.assertEqual(
+            output.getvalue(),
+            "\nOpening browser for OpenAI sign-in...\n"
+            "If it does not open, visit:\n"
+            f"{browser_url[0]}\n\n",
+        )
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(printed_urls[0]).query)
+        for secret_name in (
+            "code",
+            "code_verifier",
+            "access_token",
+            "refresh_token",
+            "id_token",
+        ):
+            self.assertNotIn(secret_name, params)
+        self.assertNotIn("private-verifier", output.getvalue())
+        self.assertNotIn("private-code", output.getvalue())
+        self.assertNotIn(sentinel.access_token, output.getvalue())
+        self.assertNotIn(sentinel.refresh_token, output.getvalue())
+        self.assertNotIn(sentinel.metadata["id_token"], output.getvalue())
 
     def test_exchange_code_returns_cached_entry(self):
         flow = OpenAIOAuthFlow()

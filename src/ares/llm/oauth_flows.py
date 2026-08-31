@@ -14,7 +14,9 @@ from typing import Protocol
 
 from .oauth_cache import OAuthTokenCacheEntry, clear_oauth_token, list_oauth_tokens, load_oauth_token, normalize_oauth_provider_key, save_oauth_token
 
-OPENAI_OAUTH_AUTH_ENDPOINT = "https://auth.openai.com/oauth/authorize"
+OPENAI_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
+# Backward-compatible alias for integrations that imported the previous name.
+OPENAI_OAUTH_AUTH_ENDPOINT = OPENAI_AUTHORIZE_URL
 OPENAI_OAUTH_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
 OPENAI_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 OPENAI_OAUTH_REDIRECT_URI = "http://localhost:1455/auth/callback"
@@ -209,7 +211,7 @@ class OpenAIOAuthFlow:
         client_id: str = OPENAI_OAUTH_CLIENT_ID,
         redirect_uri: str = OPENAI_OAUTH_REDIRECT_URI,
         scopes: tuple[str, ...] = OPENAI_OAUTH_SCOPES,
-        auth_endpoint: str = OPENAI_OAUTH_AUTH_ENDPOINT,
+        auth_endpoint: str = OPENAI_AUTHORIZE_URL,
         token_endpoint: str = OPENAI_OAUTH_TOKEN_ENDPOINT,
     ) -> None:
         self.provider = provider

@@ -657,7 +657,6 @@ class MissionCoordinator:
                         "approval receipt could not be consumed",
                     )
                     continue
-            state_db.update_mission_task_status(runnable_task.id, "running")
             operator_run_id = state_db.record_mission_operator_run(
                 mission_id=self.mission.id,
                 task_id=runnable_task.id,
@@ -665,6 +664,7 @@ class MissionCoordinator:
                 session_id=session_id,
                 status="running",
             )
+            state_db.update_mission_task_status(runnable_task.id, "running")
 
             if runnable_task.tool_name:
                 tool_args = dict(runnable_task.args) if runnable_task.args else {}
@@ -1335,7 +1335,6 @@ class MissionCoordinator:
             )
 
             # Update status to RUNNING
-            state_db.update_mission_task_status(runnable_task.id, "running")
             operator_run_id = state_db.record_mission_operator_run(
                 mission_id=self.mission.id,
                 task_id=runnable_task.id,
@@ -1343,6 +1342,7 @@ class MissionCoordinator:
                 session_id=session_id,
                 status="running",
             )
+            state_db.update_mission_task_status(runnable_task.id, "running")
 
             if runnable_task.tool_name:
                 tool_args = dict(runnable_task.args) if runnable_task.args else {}
