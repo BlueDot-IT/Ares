@@ -966,8 +966,8 @@ def mission_reconcile_state(
 ) -> None:
     """Repair explicitly named completed missions left marked as running."""
     cfg = load_config()
-    db = StateDB(cfg.home / "state.db", initialize=apply)
     try:
+        db = StateDB(cfg.home / "state.db", initialize=apply)
         result = db.reconcile_completed_mission_lifecycle(
             run_ids=run_id,
             session_ids=session_id,

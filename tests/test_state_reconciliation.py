@@ -144,6 +144,30 @@ class StateReconciliationTests(unittest.TestCase):
             self.assertIn("Reconciliation refused", result.output)
             self.assertFalse(path.exists())
 
+    def test_cli_apply_reports_corrupt_database_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            path = home / "state.db"
+            path.write_bytes(b"not a sqlite database")
+            result = CliRunner().invoke(
+                app,
+                [
+                    "mission",
+                    "reconcile-state",
+                    "--run-id",
+                    "1",
+                    "--session-id",
+                    "149",
+                    "--apply",
+                ],
+                env={"APP_HOME": str(home)},
+            )
+
+            self.assertEqual(result.exit_code, 1, result.output)
+            self.assertIn("Reconciliation refused", result.output)
+            self.assertNotIn("Traceback", result.output)
+            self.assertNotIn(str(path), result.output)
+
     def test_preview_apply_and_repeat_are_guarded_and_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = _build_stale_state(Path(tmp) / "state.db")
