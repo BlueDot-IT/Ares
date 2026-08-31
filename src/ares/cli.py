@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import platform
 import secrets
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -941,6 +942,46 @@ def mission_list() -> None:
     typer.echo("=" * 60)
     for r in rows:
         typer.echo(f"{r['id']}\t{r['profile_id']}\t{r['status']}\t{r['target']}")
+
+
+@mission_app.command("reconcile-state")
+def mission_reconcile_state(
+    run_id: list[int] = typer.Option(
+        ...,
+        "--run-id",
+        min=1,
+        help="Exact stale mission operator-run ID; repeat for each run.",
+    ),
+    session_id: list[int] = typer.Option(
+        ...,
+        "--session-id",
+        min=1,
+        help="Exact stale mission session ID; repeat for each session.",
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Commit the guarded repair. The default is a read-only preview.",
+    ),
+) -> None:
+    """Repair explicitly named completed missions left marked as running."""
+    cfg = load_config()
+    try:
+        db = StateDB(cfg.home / "state.db", initialize=apply)
+        result = db.reconcile_completed_mission_lifecycle(
+            run_ids=run_id,
+            session_ids=session_id,
+            apply=apply,
+        )
+    except (RuntimeError, ValueError, sqlite3.DatabaseError) as exc:
+        typer.echo(f"Reconciliation refused: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if not apply:
+        result["next_step"] = (
+            "Review this preview and make a fresh backup before rerunning "
+            "with --apply."
+        )
+    typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
 @app.command("mission-report")

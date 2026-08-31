@@ -8,6 +8,8 @@ All notable changes to Ares are documented here.
 
 - Finalized every deterministic and contextual-deterministic operator run and backing session across completed, failed, blocked, and exception outcomes, including tasks that do not invoke a tool.
 - Prevented completed mission work from leaving new operator-run and session records indefinitely marked as `running`.
+- Migrated state databases to schema v4, correcting the FTS5 external-content column contract and rebuilding the complete memory index without changing stored memory rows.
+- Added a dry-run-first `ares mission reconcile-state` command that repairs only explicitly named historical runs and sessions after verifying their completed mission/task relationships and exact allowlists.
 - Made the release workflow select the release-notes document that matches the verified tag instead of reusing the v1.1.0 notes for later releases.
 
 ### Security and release engineering
