@@ -34,7 +34,7 @@ class GhostMCPRunnerSchemaTests(unittest.TestCase):
         security = runner.tools["runtime_probe"]["security"]
 
         self.assertEqual(security["manifest_schema"], "1.0")
-        self.assertEqual(security["server_version"], "0.2.0")
+        self.assertEqual(security["server_version"], "0.2.1")
         self.assertEqual(security["risk"], "passive")
         self.assertIn("discovery", security["capabilities"])
         runner.close()
@@ -46,7 +46,7 @@ class GhostMCPRunnerSchemaTests(unittest.TestCase):
         security = runner.tools["runtime_probe"]["security"]
 
         self.assertEqual(security["manifest_schema"], "1.0")
-        self.assertEqual(security["server_version"], "0.2.0")
+        self.assertEqual(security["server_version"], "0.2.1")
         runner.close()
 
     def test_register_ghostmcp_tools_passes_scope_policy_to_default_runner(self):

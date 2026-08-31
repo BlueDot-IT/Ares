@@ -17,6 +17,8 @@ All notable changes to Ares are documented here.
 - Added CodeQL analysis for pull requests, pushes to `main`, a weekly schedule, and manual runs.
 - Enabled GitHub private vulnerability reporting, aligning repository settings with `SECURITY.md`.
 - Moved the GhostMCP submodule to its maintained organization repository and advanced it to the audited TLS 1.2 floor and dependency-lock revisions.
+- Advanced the optional and vendored GhostMCP dependency to 0.2.1 so the public extra resolves to the maintained release identity.
+- Bound release tags to commits reachable from protected `main` and pinned every release-workflow action to an immutable commit.
 - Clarified the OpenAI authorization URL constant name and added a regression proving that interactive login output contains no authorization code, PKCE verifier, or OAuth token.
 - Removed the nonfunctional repository-local scheduled Codex Security workflow; durable organization-level scanning remains an operational follow-up.
 - Bumped the Python distribution, runtime, documentation, and release-gate identity to `1.1.1`.

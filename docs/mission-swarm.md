@@ -65,7 +65,7 @@ graph TD
     C -->|Iterates & Validates| T[Runnable Tasks]
     T -->|Executes Tool| D[Tool Dispatcher]
     D -->|Approved call + mission ID| R[Registry Tools]
-    R -->|Manifest and engagement policy| G[GhostMCP v0.2.0]
+    R -->|Manifest and engagement policy| G[GhostMCP v0.2.1]
     R -->|Returns findings| D
     D -->|Indexes memory| DB
     C -->|Gathers findings & evidence| RP[Report Renderer]

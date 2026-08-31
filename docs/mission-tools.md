@@ -21,7 +21,7 @@ These are registered wrappers that execute local command line utilities if they 
 
 ## 4. GhostMCP contract
 
-Ares pins GhostMCP `v0.2.0` and consumes its tool manifest schema `1.0`.
+Ares pins GhostMCP `v0.2.1` and consumes its tool manifest schema `1.0`.
 Manifest risk, capability, availability, target-field, and route metadata are
 preserved through both in-process and external-stdio transports.
 
