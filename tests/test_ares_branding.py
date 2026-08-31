@@ -12,8 +12,7 @@ class AresBrandingTests(unittest.TestCase):
         import ares
 
         self.assertEqual(ares.APP_NAME, "Ares")
-        self.assertIsInstance(ares.__version__, str)
-        self.assertGreater(len(ares.__version__), 0)
+        self.assertEqual(ares.__version__, "1.1.1")
 
     def test_load_config_uses_ares_environment_names(self):
         from ares.config.loader import load_config

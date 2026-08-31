@@ -40,6 +40,7 @@ jobs:
           test "$PACKAGE_NAME" = "bluedot-ares"
           test "v${PACKAGE_VERSION}" = "${GITHUB_REF_NAME}"
           test "$(python -c 'import ares; print(ares.__version__)')" = "$PACKAGE_VERSION"
+          test -f "docs/releases/${GITHUB_REF_NAME}.md"
 
       - name: Run release test gate
         run: |
@@ -158,10 +159,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          RELEASE_NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          test -f "$RELEASE_NOTES"
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --verify-tag \
             --title "Ares ${GITHUB_REF_NAME}" \
-            --notes-file docs/releases/v1.1.0.md
+            --notes-file "$RELEASE_NOTES"
 
   publish-pypi:
     if: github.repository == 'BlueDot-IT/Ares' && vars.PYPI_PUBLISH_ENABLED == 'true'

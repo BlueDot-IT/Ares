@@ -98,6 +98,51 @@ class MissionCoordinator:
             return (self.mission.scope.target,)
         return ()
 
+    def _finish_failed_mission_session(
+        self,
+        state_db: StateDB,
+        session_id: int,
+        error: Exception,
+    ) -> None:
+        """Close in-flight deterministic state after an unexpected error."""
+        summary = str(error)
+        self.mission.status = MissionStatus.FAILED
+        try:
+            with state_db._connection() as conn:
+                running_rows = conn.execute(
+                    """
+                    SELECT id, task_id
+                    FROM mission_operator_runs
+                    WHERE mission_id = ? AND session_id = ?
+                      AND status = 'running' AND finished_at IS NULL
+                    ORDER BY id
+                    """,
+                    (self.mission.id, session_id),
+                ).fetchall()
+
+            for row in running_rows:
+                try:
+                    if row["task_id"] is not None:
+                        state_db.update_mission_task_status(
+                            row["task_id"],
+                            "failed",
+                            summary,
+                        )
+                finally:
+                    state_db.finish_mission_operator_run(
+                        int(row["id"]),
+                        status="error",
+                        summary=summary,
+                    )
+        finally:
+            try:
+                state_db.update_mission_status(
+                    self.mission.id,
+                    MissionStatus.FAILED.value,
+                )
+            finally:
+                state_db.finish_session(session_id, "error")
+
     def _validate_existing_mission_contract(
         self, stored: dict[str, Any] | None
     ) -> None:
@@ -511,6 +556,25 @@ class MissionCoordinator:
             target=self.mission.scope.target,
         )
 
+        try:
+            return self._run_deterministic_session(
+                registry=registry,
+                state_db=state_db,
+                session_id=session_id,
+                approval_callback=approval_callback,
+            )
+        except Exception as exc:
+            self._finish_failed_mission_session(state_db, session_id, exc)
+            raise
+
+    def _run_deterministic_session(
+        self,
+        *,
+        registry: ToolRegistry,
+        state_db: StateDB,
+        session_id: int,
+        approval_callback: Callable[[ToolCall, Any], bool] | None,
+    ) -> str:
         # 5. Create policy
         policy = PolicyContext(
             max_risk=self.mission.scope.max_risk,
@@ -593,14 +657,14 @@ class MissionCoordinator:
                         "approval receipt could not be consumed",
                     )
                     continue
-            state_db.update_mission_task_status(runnable_task.id, "running")
-            state_db.record_mission_operator_run(
+            operator_run_id = state_db.record_mission_operator_run(
                 mission_id=self.mission.id,
                 task_id=runnable_task.id,
                 role_id=runnable_task.role_id,
                 session_id=session_id,
                 status="running",
             )
+            state_db.update_mission_task_status(runnable_task.id, "running")
 
             if runnable_task.tool_name:
                 tool_args = dict(runnable_task.args) if runnable_task.args else {}
@@ -695,11 +759,28 @@ class MissionCoordinator:
                                 finding.refute("Refuted due to missing evidence or forbidden file target.")
 
                             state_db.record_mission_finding(finding)
+                    state_db.finish_mission_operator_run(
+                        operator_run_id,
+                        status="completed",
+                    )
                 else:
-                    state_db.update_mission_task_status(runnable_task.id, "failed")
+                    state_db.update_mission_task_status(
+                        runnable_task.id,
+                        "failed",
+                        result.error,
+                    )
+                    state_db.finish_mission_operator_run(
+                        operator_run_id,
+                        status="failed",
+                        summary=result.error,
+                    )
             else:
                 # Stub/report task without tool
                 state_db.update_mission_task_status(runnable_task.id, "completed")
+                state_db.finish_mission_operator_run(
+                    operator_run_id,
+                    status="completed",
+                )
 
         # Report rendering
         final_tasks = state_db.list_mission_tasks(self.mission.id)
@@ -717,12 +798,14 @@ class MissionCoordinator:
             self.mission.status = MissionStatus.COMPLETED
         state_db.update_mission_status(self.mission.id, self.mission.status.value)
 
-        return render_mission_report(
+        report = render_mission_report(
             mission=self.mission,
             tasks=final_tasks,
             findings=final_findings,
             evidence_chunks=evidence_chunks,
         )
+        state_db.finish_session(session_id, self.mission.status.value)
+        return report
 
     def run_agentic(
         self,
@@ -1150,6 +1233,27 @@ class MissionCoordinator:
             target=self.mission.scope.target,
         )
 
+        try:
+            return self._run_contextual_deterministic_session(
+                registry=registry,
+                state_db=state_db,
+                session_id=session_id,
+                max_tasks=max_tasks,
+                approval_callback=approval_callback,
+            )
+        except Exception as exc:
+            self._finish_failed_mission_session(state_db, session_id, exc)
+            raise
+
+    def _run_contextual_deterministic_session(
+        self,
+        *,
+        registry: ToolRegistry,
+        state_db: StateDB,
+        session_id: int,
+        max_tasks: int,
+        approval_callback: Callable[[ToolCall, Any], bool] | None,
+    ) -> str:
         policy = PolicyContext(
             max_risk=self.mission.scope.max_risk,
             allowed_cidrs=(
@@ -1231,14 +1335,14 @@ class MissionCoordinator:
             )
 
             # Update status to RUNNING
-            state_db.update_mission_task_status(runnable_task.id, "running")
-            state_db.record_mission_operator_run(
+            operator_run_id = state_db.record_mission_operator_run(
                 mission_id=self.mission.id,
                 task_id=runnable_task.id,
                 role_id=runnable_task.role_id,
                 session_id=session_id,
                 status="running",
             )
+            state_db.update_mission_task_status(runnable_task.id, "running")
 
             if runnable_task.tool_name:
                 tool_args = dict(runnable_task.args) if runnable_task.args else {}
@@ -1330,10 +1434,27 @@ class MissionCoordinator:
                                 finding.refute("Refuted due to missing evidence or forbidden file target.")
 
                             state_db.record_mission_finding(finding)
+                    state_db.finish_mission_operator_run(
+                        operator_run_id,
+                        status="completed",
+                    )
                 else:
-                    state_db.update_mission_task_status(runnable_task.id, "failed")
+                    state_db.update_mission_task_status(
+                        runnable_task.id,
+                        "failed",
+                        result.error,
+                    )
+                    state_db.finish_mission_operator_run(
+                        operator_run_id,
+                        status="failed",
+                        summary=result.error,
+                    )
             else:
                 state_db.update_mission_task_status(runnable_task.id, "completed")
+                state_db.finish_mission_operator_run(
+                    operator_run_id,
+                    status="completed",
+                )
 
         final_tasks = state_db.list_mission_tasks(self.mission.id)
         final_findings = state_db.list_mission_findings(self.mission.id)
@@ -1350,9 +1471,11 @@ class MissionCoordinator:
             self.mission.status = MissionStatus.COMPLETED
         state_db.update_mission_status(self.mission.id, self.mission.status.value)
 
-        return render_mission_report(
+        report = render_mission_report(
             mission=self.mission,
             tasks=final_tasks,
             findings=final_findings,
             evidence_chunks=evidence_chunks,
         )
+        state_db.finish_session(session_id, self.mission.status.value)
+        return report

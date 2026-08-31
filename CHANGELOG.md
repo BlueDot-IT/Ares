@@ -2,6 +2,24 @@
 
 All notable changes to Ares are documented here.
 
+## 1.1.1 - 2026-08-30
+
+### Fixed
+
+- Finalized every deterministic and contextual-deterministic operator run and backing session across completed, failed, blocked, and exception outcomes, including tasks that do not invoke a tool.
+- Prevented completed mission work from leaving new operator-run and session records indefinitely marked as `running`.
+- Made the release workflow select the release-notes document that matches the verified tag instead of reusing the v1.1.0 notes for later releases.
+
+### Security and release engineering
+
+- Added CodeQL analysis for pull requests, pushes to `main`, a weekly schedule, and manual runs.
+- Enabled GitHub private vulnerability reporting, aligning repository settings with `SECURITY.md`.
+- Moved the GhostMCP submodule to its maintained organization repository and advanced it to the audited TLS 1.2 floor and dependency-lock revisions.
+- Clarified the OpenAI authorization URL constant name and added a regression proving that interactive login output contains no authorization code, PKCE verifier, or OAuth token.
+- Removed the nonfunctional repository-local scheduled Codex Security workflow; durable organization-level scanning remains an operational follow-up.
+- Bumped the Python distribution, runtime, documentation, and release-gate identity to `1.1.1`.
+- Preserved optional PyPI publication through GitHub OIDC Trusted Publishing, gated by the `PYPI_PUBLISH_ENABLED` repository variable and the `pypi` environment.
+
 ## 1.1.0 - 2026-08-08
 
 ### Added
