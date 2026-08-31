@@ -31,7 +31,7 @@
     443,
     8443
   ],
-  "max_requests": 5000,
+  "max_requests": 1000,
   "credential_policy": {
     "allow_use": false,
     "allow_collection": false,
@@ -57,5 +57,5 @@
       ]
     }
   ],
-  "scope_digest": "b0adee08a180d7ac526ce380278ccf798aa5cae4ac77ae60c844ba404da92fc0"
+  "scope_digest": "93fc18de7b8c24db4ffecb60177fc8047a3abb43949c70a47e6f8244e93a5dc7"
 }

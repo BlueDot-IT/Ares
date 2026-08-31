@@ -23,6 +23,7 @@ from ares.policy.context import PolicyContext
 from ares.config.loader import AppConfig
 from ares.policy.risk import RISK_ORDER
 from ares.mission.approvals import ADVANCED_ROLES, task_approval_digest
+from ares.mission.contract import normalize_scope_host
 
 
 def is_forbidden_path(path: Path) -> bool:
@@ -37,7 +38,10 @@ def is_forbidden_path(path: Path) -> bool:
 def _host_from_target(target: str) -> str:
     parsed = urlparse(target)
     if parsed.scheme and parsed.hostname:
-        return parsed.hostname.lower()
+        try:
+            return normalize_scope_host(parsed.hostname)
+        except ValueError:
+            return parsed.hostname.lower().rstrip(".")
     value = target.strip()
     if not value:
         return ""
@@ -48,8 +52,11 @@ def _host_from_target(target: str) -> str:
         pass
     parsed = urlparse(f"//{value}")
     if parsed.hostname:
-        return parsed.hostname.lower()
-    return value.lower()
+        try:
+            return normalize_scope_host(parsed.hostname)
+        except ValueError:
+            return parsed.hostname.lower().rstrip(".")
+    return value.lower().rstrip(".")
 
 
 def _host_is_allowed(target: str, allowed_hosts: list[str]) -> bool:
@@ -57,8 +64,9 @@ def _host_is_allowed(target: str, allowed_hosts: list[str]) -> bool:
     if not host:
         return False
     for allowed in allowed_hosts:
-        candidate = allowed.strip()
-        if not candidate:
+        try:
+            candidate = normalize_scope_host(allowed, "allowed_hosts entry")
+        except ValueError:
             continue
         try:
             if ipaddress.ip_address(host) in ipaddress.ip_network(candidate, strict=False):
@@ -92,8 +100,8 @@ class MissionCoordinator:
         self.profile = get_profile(mission.profile_id)
 
     def _dispatcher_allowed_paths(self) -> tuple[str, ...]:
-        if self.mission.scope.allowed_paths:
-            return tuple(self.mission.scope.allowed_paths)
+        if self.mission.scope.effective_allowed_paths:
+            return self.mission.scope.effective_allowed_paths
         if self.mission.scope.target and not self.mission.scope.allowed_hosts:
             return (self.mission.scope.target,)
         return ()
@@ -225,16 +233,16 @@ class MissionCoordinator:
             if is_forbidden_path(resolved_target):
                 return False, "target path contains forbidden components"
 
-            for forbidden in self.mission.scope.forbidden_paths:
+            for forbidden in self.mission.scope.effective_forbidden_paths:
                 try:
                     resolved_target.relative_to(Path(forbidden).resolve())
                     return False, "target path is inside forbidden scope"
                 except ValueError:
                     pass
 
-            if self.mission.scope.allowed_paths:
+            if self.mission.scope.effective_allowed_paths:
                 is_inside = False
-                for p in self.mission.scope.allowed_paths:
+                for p in self.mission.scope.effective_allowed_paths:
                     resolved_p = Path(p).resolve()
                     try:
                         resolved_target.relative_to(resolved_p)
@@ -585,7 +593,7 @@ class MissionCoordinator:
             ),
             allowed_hosts=tuple(self.mission.scope.allowed_hosts),
             allowed_paths=self._dispatcher_allowed_paths(),
-            forbidden_paths=tuple(self.mission.scope.forbidden_paths),
+            forbidden_paths=self.mission.scope.effective_forbidden_paths,
             scope_bound=True,
         )
         dispatcher = ToolDispatcher(
@@ -878,7 +886,7 @@ class MissionCoordinator:
             allowed_cidrs=(),
             allowed_hosts=tuple(self.mission.scope.allowed_hosts),
             allowed_paths=(),
-            forbidden_paths=tuple(self.mission.scope.forbidden_paths),
+            forbidden_paths=self.mission.scope.effective_forbidden_paths,
             scope_bound=True,
         )
         dispatcher = ToolDispatcher(
@@ -1263,7 +1271,7 @@ class MissionCoordinator:
             ),
             allowed_hosts=tuple(self.mission.scope.allowed_hosts),
             allowed_paths=self._dispatcher_allowed_paths(),
-            forbidden_paths=tuple(self.mission.scope.forbidden_paths),
+            forbidden_paths=self.mission.scope.effective_forbidden_paths,
             scope_bound=True,
         )
         dispatcher = ToolDispatcher(

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
+import posixpath
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -14,6 +16,7 @@ from ares.policy.risk import RISK_ORDER
 ENGAGEMENT_CONTRACT_SCHEMA = "ares.engagement-contract.v1"
 MAX_ALLOWED_PORTS = 1024
 MAX_REQUESTS = 1_000_000
+DEFAULT_MAX_REQUESTS = 1_000
 MAX_RETENTION_DAYS = 3650
 
 _CONTRACT_KEYS = frozenset(
@@ -55,6 +58,7 @@ _RFC3339_RE = re.compile(
     r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+_DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 @dataclass(frozen=True)
@@ -100,7 +104,7 @@ class EngagementContract:
     starts_at: str | None = None
     ends_at: str | None = None
     allowed_ports: tuple[int, ...] = ()
-    max_requests: int | None = None
+    max_requests: int = DEFAULT_MAX_REQUESTS
     credential_policy: CredentialPolicy = field(default_factory=CredentialPolicy)
     retention: RetentionPolicy = field(default_factory=RetentionPolicy)
     evidence_sensitivity: str = "restricted"
@@ -223,8 +227,8 @@ def _parse_contract_payload(payload: Mapping[str, Any]) -> EngagementContract:
             raise ValueError("ends_at must be later than starts_at")
 
     allowed_ports = _ports(payload.get("allowed_ports", []))
-    max_requests = _optional_bounded_int(
-        payload.get("max_requests"),
+    max_requests = _bounded_int(
+        payload.get("max_requests", DEFAULT_MAX_REQUESTS),
         "max_requests",
         minimum=1,
         maximum=MAX_REQUESTS,
@@ -366,14 +370,58 @@ def _text(value: Any, label: str) -> str:
 
 
 def _path(value: Any, label: str) -> str:
-    return _text(value, label)
+    raw = _text(value, label)
+    if "\\" in raw or not raw.startswith("/") or raw.startswith("//"):
+        raise ValueError(f"{label} must be a normalized absolute path")
+    if any(part in {".", ".."} for part in raw.split("/")):
+        raise ValueError(f"{label} must not contain dot segments")
+    normalized = posixpath.normpath(raw)
+    if not normalized.startswith("/") or normalized.startswith("//"):
+        raise ValueError(f"{label} must be a normalized absolute path")
+    return normalized
+
+
+def normalize_scope_host(value: Any, label: str = "host") -> str:
+    """Return the canonical DNS, IP, or CIDR form accepted by a scope."""
+    raw = _text(value, label)
+    if any(char.isspace() for char in raw) or "%" in raw:
+        raise ValueError(f"{label} must be a host, IP address, or CIDR")
+
+    normalized = raw.lower()
+    try:
+        return str(ipaddress.ip_address(normalized))
+    except ValueError:
+        pass
+
+    if "/" in normalized:
+        try:
+            return ipaddress.ip_network(normalized, strict=True).with_prefixlen
+        except ValueError as exc:
+            raise ValueError(
+                f"{label} must be a canonical IP address or CIDR"
+            ) from exc
+
+    markers = (":", "@", "?", "#", "[", "]", "\\")
+    if any(marker in normalized for marker in markers):
+        raise ValueError(f"{label} must not contain URL or port syntax")
+    if normalized.endswith("."):
+        normalized = normalized[:-1]
+    if not normalized or len(normalized) > 253 or ".." in normalized:
+        raise ValueError(f"{label} must be a canonical DNS name")
+    try:
+        normalized.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"{label} must be an ASCII DNS name") from exc
+    labels = normalized.split(".")
+    if not all(_DNS_LABEL_RE.fullmatch(part) for part in labels):
+        raise ValueError(f"{label} must be a canonical DNS name")
+    if all(part.isdigit() for part in labels):
+        raise ValueError(f"{label} must be a canonical IP address")
+    return normalized
 
 
 def _host(value: Any, label: str) -> str:
-    normalized = _text(value, label).lower().rstrip(".")
-    if not normalized or any(char.isspace() for char in normalized):
-        raise ValueError(f"{label} must be a host, IP address, or CIDR")
-    return normalized
+    return normalize_scope_host(value, label)
 
 
 def _token(value: Any, label: str) -> str:
@@ -455,15 +503,13 @@ def _ports(value: Any) -> tuple[int, ...]:
     return tuple(sorted(ports))
 
 
-def _optional_bounded_int(
+def _bounded_int(
     value: Any,
     label: str,
     *,
     minimum: int,
     maximum: int,
-) -> int | None:
-    if value is None:
-        return None
+) -> int:
     if type(value) is not int or not minimum <= value <= maximum:
         raise ValueError(
             f"{label} must be an integer from {minimum} to {maximum}"
@@ -522,13 +568,12 @@ def _retention(value: Any) -> RetentionPolicy:
         required=set(_RETENTION_KEYS),
         label="retention",
     )
-    days = _optional_bounded_int(
+    days = _bounded_int(
         retention["days"],
         "retention.days",
         minimum=1,
         maximum=MAX_RETENTION_DAYS,
     )
-    assert days is not None
     return RetentionPolicy(
         days=days,
         delete_on_expiry=_boolean(
