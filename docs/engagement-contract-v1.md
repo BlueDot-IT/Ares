@@ -26,5 +26,7 @@ Existing code can continue to construct `MissionScope(target=..., ...)` and
 persist its legacy six-field representation. New code can load a strict
 contract with `MissionScope.from_contract_dict()` and serialize the complete
 canonical form with `MissionScope.to_contract_dict()`.
+The canonical digest is also available as `MissionScope.scope_digest` for
+binding later persistence, approval, dispatch, and reporting surfaces.
 
 See [the versioned example](examples/engagement-contract-v1.example.json).

@@ -131,8 +131,13 @@ class MissionScope:
         return self._contract
 
     @property
-    def contract_digest(self) -> str:
+    def scope_digest(self) -> str:
         return self._contract.scope_digest
+
+    @property
+    def contract_digest(self) -> str:
+        """Backward-compatible alias for the canonical scope digest."""
+        return self.scope_digest
 
     @property
     def target(self) -> str:

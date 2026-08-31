@@ -413,7 +413,8 @@ def test_mission_scope_round_trip_preserves_full_contract() -> None:
     assert scope.excluded_hosts == ["admin.example"]
     assert scope.allowed_techniques == ["dns enum"]
     assert scope.excluded_techniques == ["password spray"]
-    assert scope.contract_digest == canonical["scope_digest"]
+    assert scope.scope_digest == canonical["scope_digest"]
+    assert scope.contract_digest == scope.scope_digest
     assert scope.to_contract_dict() == canonical
 
 
