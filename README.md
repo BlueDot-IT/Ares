@@ -216,6 +216,22 @@ ares support-bundle --out ares-support-bundle.json
 
 Read [SUPPORT.md](SUPPORT.md) before opening an issue. Installation and runtime failures are covered in [docs/troubleshooting.md](docs/troubleshooting.md).
 
+## Offline Evaluation Lab
+
+Run the bundled deterministic regression fixtures without a model, network
+request, or engagement data:
+
+```bash
+ares evaluate
+ares evaluate --out ares-evaluation.json
+```
+
+The result measures exact agreement with the versioned fixtures for mission and
+task outcomes, scope and policy decisions, and finding-validation readiness. It
+does not measure model quality, live-target behavior, vulnerability discovery,
+or broad security efficacy. See [docs/evaluation-lab.md](docs/evaluation-lab.md)
+for metric semantics and limitations.
+
 ## Release verification
 
 Official releases include:
@@ -259,6 +275,7 @@ Contribution requirements are in [CONTRIBUTING.md](CONTRIBUTING.md).
 - [Installation](INSTALL.md)
 - [Quickstart](docs/quickstart.md)
 - [Mission CLI](docs/mission-cli.md)
+- [Evaluation Lab](docs/evaluation-lab.md)
 - [Architecture](docs/architecture.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Release verification](docs/verifying-releases.md)

@@ -25,6 +25,12 @@ from ares.config.loader import (
 )
 from ares.dashboard import format_dashboard_snapshot, launch_dashboard
 from ares.engagement_memory import list_engagement_memories
+from ares.evaluation import (
+    format_evaluation_summary,
+    run_evaluation,
+    serialize_evaluation_result,
+    write_evaluation_result,
+)
 from ares.gateway import AresGateway, start_gateway_server
 from ares.llm.oauth import build_oauth_broker
 from ares.llm.openai_codex import OPENAI_CODEX_BASE_URL
@@ -129,6 +135,37 @@ def support_bundle(
         private_parent=False,
     )
     typer.echo(f"Support bundle written to: {output_path.resolve()}")
+
+
+@app.command("evaluate")
+def evaluate(
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the reproducible machine-readable result.",
+    ),
+    out: str | None = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Write the reproducible JSON result to this path.",
+    ),
+) -> None:
+    """Run the bundled offline Evaluation Lab fixtures."""
+    result = run_evaluation()
+    output_path = Path(out).expanduser() if out else None
+    if output_path is not None:
+        write_evaluation_result(result, output_path)
+
+    if as_json:
+        typer.echo(serialize_evaluation_result(result), nl=False)
+    else:
+        typer.echo(format_evaluation_summary(result))
+        if output_path is not None:
+            typer.echo(f"JSON result written to: {output_path.resolve()}")
+
+    if result["summary"]["failed"]:
+        raise typer.Exit(1)
 
 
 @app.command("model")
