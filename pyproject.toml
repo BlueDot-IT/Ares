@@ -43,7 +43,7 @@ Security = "https://github.com/BlueDot-IT/Ares/security/policy"
 [project.optional-dependencies]
 anthropic = ["anthropic"]
 gemini = ["google-auth", "google-auth-oauthlib", "google-genai"]
-ghostmcp = ["ghostmcp-server==0.2.0", "mcp>=1.28.1"]
+ghostmcp = ["ghostmcp-server==0.2.1", "mcp>=1.28.1"]
 dev = ["pytest", "build", "twine"]
 
 [project.scripts]
