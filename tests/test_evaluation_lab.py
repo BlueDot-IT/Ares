@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import sqlite3
+from pathlib import Path
+from unittest.mock import patch
 
 from typer.testing import CliRunner
 
@@ -58,6 +62,56 @@ def test_serialized_result_excludes_fixture_inputs_and_runtime_details() -> None
     assert "intentional offline fixture failure" not in serialized
 
 
+def test_evaluation_blocks_network_and_does_not_read_app_home(
+    tmp_path, monkeypatch
+) -> None:
+    app_home = (tmp_path / "poisoned-app-home").resolve()
+    app_home.mkdir()
+    canary = app_home / "engagement-secret.txt"
+    canary.write_text("must-not-be-read", encoding="utf-8")
+    before = {
+        path.relative_to(app_home): path.read_bytes()
+        for path in app_home.rglob("*")
+        if path.is_file()
+    }
+    monkeypatch.setenv("APP_HOME", str(app_home))
+
+    original_path_open = Path.open
+    original_sqlite_connect = sqlite3.connect
+
+    def reject_app_home_open(path: Path, *args, **kwargs):
+        try:
+            path.resolve().relative_to(app_home)
+        except ValueError:
+            return original_path_open(path, *args, **kwargs)
+        raise AssertionError(f"evaluation accessed APP_HOME: {path.name}")
+
+    def reject_app_home_sqlite(database, *args, **kwargs):
+        try:
+            Path(database).resolve().relative_to(app_home)
+        except (TypeError, ValueError):
+            return original_sqlite_connect(database, *args, **kwargs)
+        raise AssertionError("evaluation opened APP_HOME SQLite state")
+
+    def reject_network(*_args, **_kwargs):
+        raise AssertionError("evaluation attempted network access")
+
+    monkeypatch.setattr(Path, "open", reject_app_home_open)
+    monkeypatch.setattr(sqlite3, "connect", reject_app_home_sqlite)
+    monkeypatch.setattr(socket, "socket", reject_network)
+    monkeypatch.setattr(socket, "create_connection", reject_network)
+
+    result = run_evaluation()
+
+    assert result["result"] == "pass"
+    after = {}
+    for path in app_home.rglob("*"):
+        if path.is_file():
+            with original_path_open(path, "rb") as handle:
+                after[path.relative_to(app_home)] = handle.read()
+    assert after == before
+
+
 def test_evaluate_cli_prints_plain_summary_and_writes_json(tmp_path) -> None:
     output_path = tmp_path / "evaluation.json"
     result = CliRunner().invoke(app, ["evaluate", "--out", str(output_path)])
@@ -80,3 +134,27 @@ def test_evaluate_cli_json_stdout_is_machine_readable() -> None:
     payload = json.loads(result.output)
     assert payload["schema"] == "ares.evaluation.result.v1"
     assert payload["summary"]["failed"] == 0
+
+
+def test_evaluate_cli_returns_one_and_writes_bounded_json_on_failure(
+    tmp_path,
+) -> None:
+    failure = run_evaluation()
+    failure["result"] = "fail"
+    failure["summary"] = {
+        "passed": 11,
+        "failed": 1,
+        "total": 12,
+        "fixture_pass_rate": 11 / 12,
+    }
+    output_path = tmp_path / "failed-evaluation.json"
+
+    with patch("ares.cli.run_evaluation", return_value=failure):
+        result = CliRunner().invoke(app, ["evaluate", "--out", str(output_path)])
+
+    assert result.exit_code == 1
+    assert "Result: FAIL" in result.output
+    assert "Fixtures: 11/12 passed (1 failed)" in result.output
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["result"] == "fail"
+    assert payload["summary"]["failed"] == 1
