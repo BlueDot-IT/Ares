@@ -1,0 +1,61 @@
+{
+  "schema": "ares.engagement-contract.v1",
+  "target": "staging.example.com",
+  "allowed_paths": [
+    "/srv/acme-app"
+  ],
+  "excluded_paths": [
+    "/srv/acme-app/customer-data"
+  ],
+  "allowed_hosts": [
+    "api.staging.example.com"
+  ],
+  "excluded_hosts": [
+    "billing.staging.example.com"
+  ],
+  "forbidden_actions": [
+    "bulk data collection",
+    "persistence"
+  ],
+  "allowed_techniques": [
+    "safe configuration validation",
+    "service enumeration"
+  ],
+  "excluded_techniques": [
+    "password spray"
+  ],
+  "max_risk": "active",
+  "starts_at": "2026-09-01T13:00:00Z",
+  "ends_at": "2026-09-01T22:00:00Z",
+  "allowed_ports": [
+    443,
+    8443
+  ],
+  "max_requests": 1000,
+  "credential_policy": {
+    "allow_use": false,
+    "allow_collection": false,
+    "allow_storage": false,
+    "allowed_references": []
+  },
+  "retention": {
+    "days": 30,
+    "delete_on_expiry": true
+  },
+  "evidence_sensitivity": "confidential",
+  "stop_conditions": [
+    "customer requests a stop",
+    "service instability is observed"
+  ],
+  "approval_authorities": [
+    {
+      "id": "customer-security-lead",
+      "kind": "human",
+      "allowed_risks": [
+        "scan",
+        "active"
+      ]
+    }
+  ],
+  "scope_digest": "93fc18de7b8c24db4ffecb60177fc8047a3abb43949c70a47e6f8244e93a5dc7"
+}
