@@ -61,3 +61,6 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["ares*", "lib*"]
+
+[tool.setuptools.package-data]
+"ares.evaluation" = ["fixtures/*.json"]
