@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import ipaddress
 import json
 import time
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
 
 from ares.mission.model import MissionPhase, MissionRun, MissionStatus
 from ares.mission.tasks import MissionTask, TaskStatus, task_can_run
@@ -19,11 +17,14 @@ from ares.tools.registry import ToolRegistry
 from ares.state.db import StateDB
 from ares.agent.dispatcher import ToolDispatcher
 from ares.agent.runtime import ToolCall
-from ares.policy.context import PolicyContext
+from ares.policy.context import (
+    PolicyContext,
+    target_is_within_allowed_hosts,
+    target_to_scope_host,
+)
 from ares.config.loader import AppConfig
 from ares.policy.risk import RISK_ORDER
 from ares.mission.approvals import ADVANCED_ROLES, task_approval_digest
-from ares.mission.contract import normalize_scope_host
 
 
 def is_forbidden_path(path: Path) -> bool:
@@ -36,45 +37,11 @@ def is_forbidden_path(path: Path) -> bool:
 
 
 def _host_from_target(target: str) -> str:
-    parsed = urlparse(target)
-    if parsed.scheme and parsed.hostname:
-        try:
-            return normalize_scope_host(parsed.hostname)
-        except ValueError:
-            return parsed.hostname.lower().rstrip(".")
-    value = target.strip()
-    if not value:
-        return ""
-    unbracketed = value.removeprefix("[").removesuffix("]")
-    try:
-        return str(ipaddress.ip_address(unbracketed)).lower()
-    except ValueError:
-        pass
-    parsed = urlparse(f"//{value}")
-    if parsed.hostname:
-        try:
-            return normalize_scope_host(parsed.hostname)
-        except ValueError:
-            return parsed.hostname.lower().rstrip(".")
-    return value.lower().rstrip(".")
+    return target_to_scope_host(target)
 
 
 def _host_is_allowed(target: str, allowed_hosts: list[str]) -> bool:
-    host = _host_from_target(target)
-    if not host:
-        return False
-    for allowed in allowed_hosts:
-        try:
-            candidate = normalize_scope_host(allowed, "allowed_hosts entry")
-        except ValueError:
-            continue
-        try:
-            if ipaddress.ip_address(host) in ipaddress.ip_network(candidate, strict=False):
-                return True
-        except ValueError:
-            if host == _host_from_target(candidate):
-                return True
-    return False
+    return target_is_within_allowed_hosts(target, allowed_hosts)
 
 
 def _task_network_targets(task: MissionTask) -> list[str]:
@@ -90,7 +57,14 @@ def _task_network_targets(task: MissionTask) -> list[str]:
         if isinstance(value, list):
             targets.extend(str(item).strip() for item in value if str(item).strip())
         elif isinstance(value, str):
-            targets.extend(part.strip() for part in value.replace("\n", ";").split(";") if part.strip())
+            normalized = value.replace("\n", ";")
+            if key != "urls":
+                normalized = normalized.replace(",", ";")
+            targets.extend(
+                part.strip()
+                for part in normalized.split(";")
+                if part.strip()
+            )
     return targets
 
 
@@ -102,8 +76,6 @@ class MissionCoordinator:
     def _dispatcher_allowed_paths(self) -> tuple[str, ...]:
         if self.mission.scope.effective_allowed_paths:
             return self.mission.scope.effective_allowed_paths
-        if self.mission.scope.target and not self.mission.scope.allowed_hosts:
-            return (self.mission.scope.target,)
         return ()
 
     def _finish_failed_mission_session(
@@ -235,7 +207,7 @@ class MissionCoordinator:
 
             for forbidden in self.mission.scope.effective_forbidden_paths:
                 try:
-                    resolved_target.relative_to(Path(forbidden).resolve())
+                    resolved_target.relative_to(Path(forbidden))
                     return False, "target path is inside forbidden scope"
                 except ValueError:
                     pass
@@ -243,15 +215,16 @@ class MissionCoordinator:
             if self.mission.scope.effective_allowed_paths:
                 is_inside = False
                 for p in self.mission.scope.effective_allowed_paths:
-                    resolved_p = Path(p).resolve()
                     try:
-                        resolved_target.relative_to(resolved_p)
+                        resolved_target.relative_to(Path(p))
                         is_inside = True
                         break
                     except ValueError:
                         pass
                 if not is_inside:
                     return False, "target path is outside allowed scope paths"
+            else:
+                return False, "local task requires explicit allowed_paths"
 
         action_text = " ".join(
             [task.tool_name or "", task.description, json.dumps(task.args, sort_keys=True)]
@@ -595,6 +568,7 @@ class MissionCoordinator:
             allowed_paths=self._dispatcher_allowed_paths(),
             forbidden_paths=self.mission.scope.effective_forbidden_paths,
             scope_bound=True,
+            paths_are_bound=True,
         )
         dispatcher = ToolDispatcher(
             registry=registry,
@@ -888,6 +862,7 @@ class MissionCoordinator:
             allowed_paths=(),
             forbidden_paths=self.mission.scope.effective_forbidden_paths,
             scope_bound=True,
+            paths_are_bound=True,
         )
         dispatcher = ToolDispatcher(
             registry=effective_registry,
@@ -1273,6 +1248,7 @@ class MissionCoordinator:
             allowed_paths=self._dispatcher_allowed_paths(),
             forbidden_paths=self.mission.scope.effective_forbidden_paths,
             scope_bound=True,
+            paths_are_bound=True,
         )
         dispatcher = ToolDispatcher(
             registry=registry,

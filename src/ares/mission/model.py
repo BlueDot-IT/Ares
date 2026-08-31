@@ -211,17 +211,23 @@ class MissionScope:
         forbidden_actions: Sequence[str] | None = None,
         max_risk: str = "scan",
     ) -> None:
+        legacy_target = _legacy_text(target, "target")
         legacy_allowed_paths = _legacy_paths(allowed_paths, "allowed_paths")
         legacy_forbidden_paths = _legacy_paths(
             forbidden_paths, "forbidden_paths"
         )
+        legacy_allowed_hosts = list(allowed_hosts or ())
         self._contract = parse_engagement_contract(
             {
                 "schema": ENGAGEMENT_CONTRACT_SCHEMA,
-                "target": target,
-                "allowed_paths": _effective_paths(legacy_allowed_paths),
+                "target": legacy_target,
+                "allowed_paths": _legacy_effective_allowed_paths(
+                    legacy_allowed_paths,
+                    target=legacy_target,
+                    allowed_hosts=legacy_allowed_hosts,
+                ),
                 "excluded_paths": _effective_paths(legacy_forbidden_paths),
-                "allowed_hosts": list(allowed_hosts or ()),
+                "allowed_hosts": legacy_allowed_hosts,
                 "forbidden_actions": list(forbidden_actions or ()),
                 "max_risk": max_risk,
             }
@@ -302,13 +308,27 @@ class MissionScope:
             )
         else:
             payload[self._LIST_FIELDS[field_name]] = list(values)
+        if next_legacy_paths is not None:
+            payload["allowed_paths"] = _legacy_effective_allowed_paths(
+                next_legacy_paths["allowed_paths"],
+                target=payload["target"],
+                allowed_hosts=payload["allowed_hosts"],
+            )
         contract = parse_engagement_contract(payload)
         self._contract = contract
         self._legacy_paths = next_legacy_paths
 
     def _replace_scalar(self, field_name: str, value: Any) -> None:
         payload = self._contract.to_dict(include_digest=False)
-        payload[field_name] = value
+        if self._legacy_paths is not None and field_name == "target":
+            payload[field_name] = _legacy_text(value, "target")
+            payload["allowed_paths"] = _legacy_effective_allowed_paths(
+                self._legacy_paths["allowed_paths"],
+                target=payload[field_name],
+                allowed_hosts=payload["allowed_hosts"],
+            )
+        else:
+            payload[field_name] = value
         self._contract = parse_engagement_contract(payload)
 
     @property
@@ -454,14 +474,39 @@ def _legacy_paths(
     return tuple(sorted(normalized))
 
 
+def _legacy_text(value: Any, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{label} must not be empty")
+    if any(ord(char) < 32 or ord(char) == 127 for char in normalized):
+        raise ValueError(f"{label} must not contain control characters")
+    return normalized
+
+
 def _effective_paths(values: Sequence[str]) -> list[str]:
     effective: list[str] = []
     for value in values:
         try:
-            effective.append(str(Path(value).resolve(strict=False)))
+            effective.append(
+                str(Path(value).expanduser().resolve(strict=False))
+            )
         except (OSError, RuntimeError) as exc:
             raise ValueError(f"invalid legacy scope path: {value!r}") from exc
     return effective
+
+
+def _legacy_effective_allowed_paths(
+    values: Sequence[str],
+    *,
+    target: str,
+    allowed_hosts: Sequence[Any],
+) -> list[str]:
+    effective = _effective_paths(values)
+    if effective or allowed_hosts:
+        return effective
+    return _effective_paths((target,))
 
 
 @dataclass

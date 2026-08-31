@@ -8,6 +8,7 @@ import posixpath
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, ClassVar, Mapping
 
 from ares.policy.risk import RISK_ORDER
@@ -110,11 +111,20 @@ class EngagementContract:
     evidence_sensitivity: str = "restricted"
     stop_conditions: tuple[str, ...] = ()
     approval_authorities: tuple[ApprovalAuthority, ...] = ()
+    _paths_bound: bool = field(
+        default=False,
+        init=False,
+        repr=False,
+        compare=False,
+    )
     schema: ClassVar[str] = ENGAGEMENT_CONTRACT_SCHEMA
 
     def to_dict(self, *, include_digest: bool = True) -> dict[str, Any]:
         """Return the canonical JSON-compatible representation."""
-        normalized = _parse_contract_payload(_model_payload(self))
+        normalized = _parse_contract_payload(
+            _model_payload(self),
+            bind_paths=not self._paths_bound,
+        )
         payload = _model_payload(normalized)
         if include_digest:
             payload["scope_digest"] = _digest_payload(payload)
@@ -165,7 +175,11 @@ def engagement_contract_digest(
     return contract.scope_digest
 
 
-def _parse_contract_payload(payload: Mapping[str, Any]) -> EngagementContract:
+def _parse_contract_payload(
+    payload: Mapping[str, Any],
+    *,
+    bind_paths: bool = True,
+) -> EngagementContract:
     schema = payload.get("schema")
     if schema != ENGAGEMENT_CONTRACT_SCHEMA:
         raise ValueError(
@@ -173,11 +187,12 @@ def _parse_contract_payload(payload: Mapping[str, Any]) -> EngagementContract:
         )
 
     target = _text(payload.get("target"), "target")
+    path_normalizer = _path if bind_paths else _bound_path
     allowed_paths = _string_list(
-        payload.get("allowed_paths", []), "allowed_paths", _path
+        payload.get("allowed_paths", []), "allowed_paths", path_normalizer
     )
     excluded_paths = _string_list(
-        payload.get("excluded_paths", []), "excluded_paths", _path
+        payload.get("excluded_paths", []), "excluded_paths", path_normalizer
     )
     allowed_hosts = _string_list(
         payload.get("allowed_hosts", []), "allowed_hosts", _host
@@ -264,7 +279,7 @@ def _parse_contract_payload(payload: Mapping[str, Any]) -> EngagementContract:
         payload.get("approval_authorities", [])
     )
 
-    return EngagementContract(
+    contract = EngagementContract(
         target=target,
         allowed_paths=allowed_paths,
         excluded_paths=excluded_paths,
@@ -284,6 +299,8 @@ def _parse_contract_payload(payload: Mapping[str, Any]) -> EngagementContract:
         stop_conditions=stop_conditions,
         approval_authorities=approval_authorities,
     )
+    object.__setattr__(contract, "_paths_bound", True)
+    return contract
 
 
 def _model_payload(contract: EngagementContract) -> dict[str, Any]:
@@ -369,7 +386,7 @@ def _text(value: Any, label: str) -> str:
     return normalized
 
 
-def _path(value: Any, label: str) -> str:
+def _normalize_path(value: Any, label: str, *, bind: bool) -> str:
     raw = _text(value, label)
     if "\\" in raw or not raw.startswith("/") or raw.startswith("//"):
         raise ValueError(f"{label} must be a normalized absolute path")
@@ -378,7 +395,21 @@ def _path(value: Any, label: str) -> str:
     normalized = posixpath.normpath(raw)
     if not normalized.startswith("/") or normalized.startswith("//"):
         raise ValueError(f"{label} must be a normalized absolute path")
+    if bind:
+        try:
+            normalized = str(Path(normalized).resolve(strict=False))
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(f"{label} could not be resolved") from exc
     return normalized
+
+
+def _path(value: Any, label: str) -> str:
+    return _normalize_path(value, label, bind=True)
+
+
+def _bound_path(value: Any, label: str) -> str:
+    """Validate an already-bound path without consulting live filesystem state."""
+    return _normalize_path(value, label, bind=False)
 
 
 def normalize_scope_host(value: Any, label: str = "host") -> str:

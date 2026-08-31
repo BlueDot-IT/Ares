@@ -18,6 +18,7 @@ from ares.mission.contract import (
 from ares.mission.coordinator import MissionCoordinator
 from ares.mission.model import MissionRun, MissionScope
 from ares.mission.tasks import MissionTask
+from ares.policy.context import PolicyContext
 
 
 def _contract(**overrides: object) -> dict[str, object]:
@@ -214,6 +215,116 @@ def test_runtime_host_interpretation_cannot_expand_contract_authority() -> None:
     assert "outside allowed host scope" in reason
 
 
+def test_requested_network_must_be_contained_by_allowed_network() -> None:
+    def validate(
+        allowed: str,
+        target: str,
+        *,
+        args: dict[str, object] | None = None,
+    ) -> tuple[bool, str]:
+        scope = MissionScope.from_contract_dict(
+            canonicalize_engagement_contract(
+                _contract(
+                    target=allowed,
+                    allowed_hosts=[allowed],
+                    max_risk="post-exploitation",
+                )
+            )
+        )
+        mission = MissionRun(
+            id="m_network_containment",
+            profile_id="authorized-operator-validation",
+            scope=scope,
+        )
+        task = MissionTask(
+            id="t_network_containment",
+            mission_id=mission.id,
+            role_id="infiltrator",
+            phase="post-exploitation",
+            tool_name="smbmap",
+            toolset="ghostmcp",
+            target=target,
+            args=args or {"host": target},
+            description="Validate requested network containment.",
+            supporting_evidence_tool_call_ids=[1],
+        )
+        return MissionCoordinator(mission).validate_task(task)
+
+    assert validate("192.0.2.1", "192.0.2.1") == (True, "")
+    single_valid, single_reason = validate("192.0.2.1", "192.0.2.1/24")
+    assert single_valid is False
+    assert "outside allowed host scope" in single_reason
+    assert validate("192.0.2.0/24", "192.0.2.64/26") == (True, "")
+    wider_valid, wider_reason = validate("192.0.2.0/24", "192.0.2.1/23")
+    assert wider_valid is False
+    assert "outside allowed host scope" in wider_reason
+    assert validate("2001:db8::/32", "2001:db8:1::/48") == (True, "")
+    ipv6_wider, _ = validate("2001:db8::1", "2001:db8::/64")
+    assert ipv6_wider is False
+    assert validate(
+        "192.0.2.0/24",
+        "192.0.2.1",
+        args={"targets": "192.0.2.1,192.0.2.128/26"},
+    ) == (True, "")
+    comma_escape, _ = validate(
+        "192.0.2.0/24",
+        "192.0.2.1",
+        args={"targets": "192.0.2.1,198.51.100.1"},
+    )
+    assert comma_escape is False
+
+    for allowed, requested, permitted in (
+        ("192.0.2.1", "192.0.2.1", True),
+        ("192.0.2.1", "192.0.2.1/24", False),
+        ("192.0.2.0/24", "192.0.2.64/26", True),
+        ("192.0.2.0/24", "192.0.2.1/23", False),
+        ("192.0.2.0/24", "192.0.2.1-192.0.2.20", True),
+        ("192.0.2.0/28", "192.0.2.1-192.0.2.20", False),
+        ("192.0.2.0/24", "192.0.2.1-20", False),
+        ("2001:db8::/32", "2001:db8:1::/48", True),
+        ("2001:db8::1", "2001:db8::/64", False),
+        ("192.0.2.1", "192.0.2.1/24:443", False),
+        ("192.0.2.1", "https://192.0.2.1/24", True),
+        ("192.0.2.1", "https://[192.0.2.1/24", False),
+    ):
+        policy = PolicyContext(
+            allowed_cidrs=(),
+            allowed_hosts=(allowed,),
+            scope_bound=True,
+        )
+        if permitted:
+            policy.enforce_target_scope(requested)
+        else:
+            with pytest.raises(PermissionError, match="outside explicit host scope"):
+                policy.enforce_target_scope(requested)
+
+    comma_policy = PolicyContext(
+        allowed_cidrs=(),
+        allowed_hosts=("192.0.2.0/24",),
+        scope_bound=True,
+    )
+    comma_policy.enforce_tool_call(
+        "masscan",
+        "active",
+        {"targets": "192.0.2.1,192.0.2.128/26"},
+    )
+    PolicyContext(
+        allowed_cidrs=(),
+        allowed_hosts=("2001:db8::/32",),
+        scope_bound=True,
+    ).enforce_tool_call(
+        "masscan",
+        "active",
+        {"targets": "2001:db8:1::/48"},
+    )
+    with pytest.raises(PermissionError, match="outside explicit host scope"):
+        comma_policy.enforce_tool_call(
+            "masscan",
+            "active",
+            {"targets": "192.0.2.1,198.51.100.1"},
+        )
+
+
 @pytest.mark.parametrize(
     "path",
     [
@@ -236,6 +347,61 @@ def test_strict_paths_normalize_without_changing_effective_scope() -> None:
         _contract(allowed_paths=["/srv//app/", "/srv/app"])
     )
     assert canonical["allowed_paths"] == ["/srv/app"]
+
+
+def test_strict_path_binding_resists_symlink_retargeting(tmp_path: Path) -> None:
+    safe = tmp_path / "safe"
+    outside = tmp_path / "outside"
+    safe.mkdir()
+    outside.mkdir()
+    scope_link = tmp_path / "scope-link"
+    scope_link.symlink_to(safe, target_is_directory=True)
+
+    canonical = canonicalize_engagement_contract(
+        _contract(target=str(scope_link), allowed_paths=[str(scope_link)])
+    )
+    assert canonical["allowed_paths"] == [str(safe.resolve())]
+    scope = MissionScope.from_contract_dict(canonical)
+    original_digest = scope.scope_digest
+
+    scope_link.unlink()
+    scope_link.symlink_to(outside, target_is_directory=True)
+
+    mission = MissionRun(
+        id="m_strict_symlink_binding",
+        profile_id="secrets-audit",
+        scope=scope,
+    )
+    coordinator = MissionCoordinator(mission)
+
+    def task(task_id: str, target: Path) -> MissionTask:
+        return MissionTask(
+            id=task_id,
+            mission_id=mission.id,
+            role_id="scanner",
+            phase="scan",
+            tool_name="redteam_secret_scan",
+            toolset="redteam_secrets",
+            target=str(target),
+            description="Validate stable strict path binding.",
+        )
+
+    assert scope.scope_digest == original_digest
+    assert coordinator.validate_task(task("t_safe", safe)) == (True, "")
+    outside_valid, outside_reason = coordinator.validate_task(
+        task("t_outside", outside)
+    )
+    assert outside_valid is False
+    assert "outside allowed scope" in outside_reason
+
+    policy = PolicyContext(
+        allowed_paths=coordinator._dispatcher_allowed_paths(),
+        scope_bound=True,
+        paths_are_bound=True,
+    )
+    policy.enforce_path_scope(str(safe))
+    with pytest.raises(PermissionError, match="outside explicit path scope"):
+        policy.enforce_path_scope(str(outside))
 
 
 def test_digest_is_stable_across_key_and_set_order() -> None:
@@ -509,6 +675,96 @@ def test_mission_scope_loads_legacy_scope_json() -> None:
     assert scope.to_contract_dict()["excluded_paths"] == [
         str(Path("src/private").resolve())
     ]
+
+
+def test_target_only_path_scope_is_strictly_explicit_and_legacy_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first_repo = first / "repo"
+    second_repo = second / "repo"
+    first_repo.mkdir(parents=True)
+    second_repo.mkdir(parents=True)
+
+    monkeypatch.chdir(first)
+    strict_scope = MissionScope.from_contract_dict(
+        canonicalize_engagement_contract(
+            _contract(target="repo")
+        )
+    )
+    strict_digest = strict_scope.scope_digest
+    legacy_scope = MissionScope(target="repo")
+    legacy_digest = legacy_scope.scope_digest
+    assert legacy_scope.allowed_paths == []
+    assert legacy_scope.to_legacy_dict()["allowed_paths"] == []
+    assert legacy_scope.effective_allowed_paths == (str(first_repo.resolve()),)
+
+    monkeypatch.chdir(second)
+
+    def task(mission_id: str, task_id: str, target: Path) -> MissionTask:
+        return MissionTask(
+            id=task_id,
+            mission_id=mission_id,
+            role_id="scanner",
+            phase="scan",
+            tool_name="redteam_secret_scan",
+            toolset="redteam_secrets",
+            target=str(target),
+            description="Validate target-only path binding.",
+        )
+
+    strict_mission = MissionRun(
+        id="m_strict_target_only",
+        profile_id="secrets-audit",
+        scope=strict_scope,
+    )
+    strict_coordinator = MissionCoordinator(strict_mission)
+    strict_valid, strict_reason = strict_coordinator.validate_task(
+        task(strict_mission.id, "t_strict_second", second_repo)
+    )
+    assert strict_valid is False
+    assert "requires explicit allowed_paths" in strict_reason
+    assert strict_coordinator._dispatcher_allowed_paths() == ()
+    assert strict_scope.scope_digest == strict_digest
+
+    host_only_scope = MissionScope.from_contract_dict(
+        canonicalize_engagement_contract(
+            _contract(target="example.test", allowed_hosts=["example.test"])
+        )
+    )
+    host_only_mission = MissionRun(
+        id="m_strict_host_only_local_task",
+        profile_id="secrets-audit",
+        scope=host_only_scope,
+    )
+    host_only_valid, host_only_reason = MissionCoordinator(
+        host_only_mission
+    ).validate_task(
+        task(host_only_mission.id, "t_host_only_local", second_repo)
+    )
+    assert host_only_valid is False
+    assert "requires explicit allowed_paths" in host_only_reason
+
+    legacy_mission = MissionRun(
+        id="m_legacy_target_only",
+        profile_id="secrets-audit",
+        scope=legacy_scope,
+    )
+    legacy_coordinator = MissionCoordinator(legacy_mission)
+    assert legacy_coordinator._dispatcher_allowed_paths() == (
+        str(first_repo.resolve()),
+    )
+    assert legacy_coordinator.validate_task(
+        task(legacy_mission.id, "t_legacy_first", first_repo)
+    ) == (True, "")
+    legacy_valid, legacy_reason = legacy_coordinator.validate_task(
+        task(legacy_mission.id, "t_legacy_second", second_repo)
+    )
+    assert legacy_valid is False
+    assert "outside allowed scope" in legacy_reason
+    assert legacy_scope.scope_digest == legacy_digest
 
 
 def test_legacy_path_mutations_rebind_digest_and_runtime_authorization(

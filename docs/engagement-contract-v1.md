@@ -24,11 +24,29 @@ fragments, bracket syntax, embedded ports, wildcard names, and CIDRs with host
 bits set are rejected. Ports belong in `allowed_ports`; they are never parsed
 out of a host entry.
 
+At the existing mission-validation boundary, a bare IP/CIDR task target or
+explicit full-address range is treated as a requested network. Both range
+endpoints must be complete IP addresses; abbreviated range syntax is rejected.
+The complete request must be contained by one allowed IP or CIDR; an allowed
+single IP cannot authorize a wider subnet or range. The coordinator and
+dispatcher share this containment rule.
+
 Strict `allowed_paths` and `excluded_paths` entries are normalized absolute
 POSIX paths. Relative paths, backslashes, double-leading slashes, and `.` or
-`..` segments are rejected so the digest binds one lexical filesystem scope.
-Repeated separators and trailing separators normalize to the same canonical
-path.
+`..` segments are rejected. The parser resolves each accepted root once and
+stores that effective absolute root in the canonical contract, so later symlink
+retargeting cannot widen the in-memory authorization without changing the
+contract. Repeated separators and trailing separators normalize to the same
+canonical path. Reloading a persisted strict contract revalidates its supplied
+digest against the then-effective roots and fails closed on a mismatch. The
+current state database still writes the legacy six-field bridge without that
+digest, so this does not claim digest-bound cross-process resume for legacy
+state rows.
+
+Every strict local mission task must be backed by declared `allowed_paths`;
+`allowed_hosts` never grants filesystem authority. The free-form `target` is
+descriptive and is never resolved against the process working directory as an
+implicit strict filesystem grant.
 
 `max_requests` defaults to the conservative bound of 1,000 requests. An
 explicit value must be an integer from 1 through 1,000,000; `null`, zero,
@@ -53,5 +71,8 @@ digest, and uses the effective paths for runtime authorization. Legacy list
 mutation remains supported: `append`, item mutation, and whole-list assignment
 are validated atomically and immediately regenerate the contract and digest.
 An invalid mutation raises and leaves the prior scope unchanged.
+When a legacy local scope omits `allowed_paths`, its historical target fallback
+is resolved once and bound as the effective allowed root while the six-field
+legacy representation continues to expose the original target and empty list.
 
 See [the versioned example](examples/engagement-contract-v1.example.json).
