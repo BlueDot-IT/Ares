@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import platform
 import secrets
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -965,14 +966,14 @@ def mission_reconcile_state(
 ) -> None:
     """Repair explicitly named completed missions left marked as running."""
     cfg = load_config()
-    db = StateDB(cfg.home / "state.db")
+    db = StateDB(cfg.home / "state.db", initialize=apply)
     try:
         result = db.reconcile_completed_mission_lifecycle(
             run_ids=run_id,
             session_ids=session_id,
             apply=apply,
         )
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, sqlite3.DatabaseError) as exc:
         typer.echo(f"Reconciliation refused: {exc}", err=True)
         raise typer.Exit(1) from exc
     if not apply:

@@ -26,10 +26,16 @@ MISSION_RECONCILIATION_SUMMARY = (
 class StateDB:
     """Small SQLite persistence layer for runtime sessions, evidence, and memory."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        initialize: bool = True,
+    ) -> None:
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_schema()
+        if initialize:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
         fd = os.open(
@@ -55,6 +61,17 @@ class StateDB:
         try:
             yield conn
             conn.commit()
+        finally:
+            conn.close()
+
+    @contextmanager
+    def _read_only_connection(self) -> Iterator[sqlite3.Connection]:
+        uri = f"{self.path.resolve().as_uri()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only = ON")
+        try:
+            yield conn
         finally:
             conn.close()
 
@@ -1349,7 +1366,10 @@ class StateDB:
             "?" for _ in expected_session_ids
         )
 
-        with self._connection() as conn:
+        connection = (
+            self._connection if apply else self._read_only_connection
+        )
+        with connection() as conn:
             conn.execute("BEGIN IMMEDIATE" if apply else "BEGIN")
             rows = conn.execute(
                 f"""
