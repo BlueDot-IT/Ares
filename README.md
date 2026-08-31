@@ -16,7 +16,7 @@ Ares is designed for security practitioners who need more than a chat wrapper bu
 - Python distribution: `bluedot-ares`
 - Python import: `ares`
 - Primary command: `ares`
-- Current source version: `1.1.0`
+- Current source version: `1.1.1`
 - License: MIT
 - Supported Python: 3.11, 3.12, and 3.13
 
@@ -57,7 +57,7 @@ pipx install bluedot-ares
 uv tool install bluedot-ares
 ```
 
-Until the first `bluedot-ares` PyPI release is published, install the matching wheel from the GitHub release or use the source installation path in [INSTALL.md](INSTALL.md).
+If the matching `bluedot-ares` release is not available from PyPI, install its verified wheel from the GitHub release or use the source installation path in [INSTALL.md](INSTALL.md).
 
 Verify the install:
 

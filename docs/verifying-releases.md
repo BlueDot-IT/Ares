@@ -22,16 +22,16 @@ gh auth login
 mkdir ares-release
 cd ares-release
 
-gh release download v1.1.0 \
+gh release download v1.1.1 \
   --repo BlueDot-IT/Ares
 ```
 
 Expected files include:
 
 ```text
-bluedot_ares-1.1.0-py3-none-any.whl
-bluedot_ares-1.1.0.tar.gz
-bluedot-ares-v1.1.0.cdx.json
+bluedot_ares-1.1.1-py3-none-any.whl
+bluedot_ares-1.1.1.tar.gz
+bluedot-ares-v1.1.1.cdx.json
 release-metadata.json
 SHA256SUMS
 ```
@@ -54,11 +54,11 @@ gsha256sum -c SHA256SUMS
 
 ```bash
 gh attestation verify \
-  bluedot_ares-1.1.0-py3-none-any.whl \
+  bluedot_ares-1.1.1-py3-none-any.whl \
   --repo BlueDot-IT/Ares
 
 gh attestation verify \
-  bluedot_ares-1.1.0.tar.gz \
+  bluedot_ares-1.1.1.tar.gz \
   --repo BlueDot-IT/Ares
 ```
 
@@ -70,7 +70,7 @@ The release workflow binds the wheel and source distribution to the published Cy
 
 ```bash
 gh attestation verify \
-  bluedot_ares-1.1.0-py3-none-any.whl \
+  bluedot_ares-1.1.1-py3-none-any.whl \
   --repo BlueDot-IT/Ares \
   --predicate-type https://cyclonedx.org/bom
 ```
@@ -79,7 +79,7 @@ GitHub CLI predicate filtering may vary by version. When the installed CLI does 
 
 ```bash
 gh attestation verify \
-  bluedot_ares-1.1.0-py3-none-any.whl \
+  bluedot_ares-1.1.1-py3-none-any.whl \
   --repo BlueDot-IT/Ares \
   --format json > wheel-attestations.json
 ```
@@ -104,13 +104,13 @@ Confirm:
 Compare the tag and commit:
 
 ```bash
-git ls-remote https://github.com/BlueDot-IT/Ares.git refs/tags/v1.1.0
+git ls-remote https://github.com/BlueDot-IT/Ares.git refs/tags/v1.1.1
 ```
 
 ## Inspect the wheel before installation
 
 ```bash
-python -m zipfile -l bluedot_ares-1.1.0-py3-none-any.whl
+python -m zipfile -l bluedot_ares-1.1.1-py3-none-any.whl
 ```
 
 The distribution name is `bluedot-ares`, but the import package and command remain `ares`.
@@ -118,7 +118,7 @@ The distribution name is `bluedot-ares`, but the import package and command rema
 Install into an isolated environment only after verification:
 
 ```bash
-pipx install ./bluedot_ares-1.1.0-py3-none-any.whl
+pipx install ./bluedot_ares-1.1.1-py3-none-any.whl
 ```
 
 ## PyPI verification

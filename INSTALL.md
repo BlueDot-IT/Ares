@@ -48,13 +48,13 @@ uv tool install 'bluedot-ares[gemini]'
 Download the wheel and verify it before installation. The wheel name uses an underscore because Python wheel filenames normalize hyphens:
 
 ```bash
-gh release download v1.1.0 \
+gh release download v1.1.1 \
   --repo BlueDot-IT/Ares \
   --pattern 'bluedot_ares-*.whl' \
   --pattern SHA256SUMS
 
 sha256sum -c SHA256SUMS --ignore-missing
-pipx install ./bluedot_ares-1.1.0-py3-none-any.whl
+pipx install ./bluedot_ares-1.1.1-py3-none-any.whl
 ```
 
 See [docs/verifying-releases.md](docs/verifying-releases.md) for provenance and SBOM verification.

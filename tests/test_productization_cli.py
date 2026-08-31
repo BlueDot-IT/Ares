@@ -29,7 +29,7 @@ class ProductizationCliTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         payload = json.loads(result.output)
-        self.assertEqual(payload["ares_version"], "1.1.0")
+        self.assertEqual(payload["ares_version"], "1.1.1")
         self.assertEqual(payload["distribution"], "bluedot-ares")
         self.assertIn("registered_tools", payload)
         self.assertNotIn("api_key", payload)
@@ -47,7 +47,7 @@ class ProductizationCliTests(unittest.TestCase):
             payload = json.loads(output.read_text(encoding="utf-8"))
 
         self.assertEqual(payload["schema_version"], 1)
-        self.assertEqual(payload["runtime"]["ares_version"], "1.1.0")
+        self.assertEqual(payload["runtime"]["ares_version"], "1.1.1")
         self.assertEqual(payload["runtime"]["distribution"], "bluedot-ares")
         self.assertIn("doctor", payload)
         self.assertNotIn("sessions", payload)
