@@ -6,7 +6,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
 from ares.secure_files import PRIVATE_FILE_MODE, tighten_private_fd
 
@@ -15,7 +15,12 @@ if TYPE_CHECKING:
     from ares.mission.model import MissionRun
     from ares.mission.tasks import MissionTask
 
-STATE_SCHEMA_VERSION = 3
+MISSION_LIFECYCLE_SCHEMA_VERSION = 3
+STATE_SCHEMA_VERSION = 4
+MISSION_RECONCILIATION_SUMMARY = (
+    "Administratively reconciled after mission finalization repair; "
+    "actual task completion time was not recorded."
+)
 
 
 class StateDB:
@@ -69,11 +74,15 @@ class StateDB:
             self._ensure_messages_schema(conn)
             self._ensure_hosts_schema(conn)
             self._ensure_services_schema(conn)
-            self._ensure_memory_schema(conn)
+            self._ensure_memory_schema(
+                conn,
+                rebuild_existing=previous_schema_version
+                < STATE_SCHEMA_VERSION,
+            )
             self._ensure_mission_schema(
                 conn,
                 migrate_legacy_findings=previous_schema_version
-                < STATE_SCHEMA_VERSION,
+                < MISSION_LIFECYCLE_SCHEMA_VERSION,
             )
             self._ensure_autonomy_schema(conn)
             self._set_schema_version(conn, STATE_SCHEMA_VERSION)
@@ -203,7 +212,12 @@ class StateDB:
             """
         )
 
-    def _ensure_memory_schema(self, conn: sqlite3.Connection) -> None:
+    def _ensure_memory_schema(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        rebuild_existing: bool,
+    ) -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS memory_chunks (
@@ -225,44 +239,145 @@ class StateDB:
             "CREATE INDEX IF NOT EXISTS idx_memory_chunks_session_created ON memory_chunks(session_id, created_at DESC)"
         )
         try:
-            conn.execute(
+            schema_current = self._memory_fts_schema_is_current(conn)
+            if not schema_current:
+                self._drop_memory_fts(conn)
+                self._create_memory_fts(conn)
+                rebuild_existing = True
+            if rebuild_existing:
+                self._rebuild_memory_fts(conn)
+            try:
+                self._check_memory_fts_integrity(conn)
+            except sqlite3.DatabaseError:
+                self._rebuild_memory_fts(conn)
+                self._check_memory_fts_integrity(conn)
+        except sqlite3.OperationalError as exc:
+            if "no such module: fts5" not in str(exc).lower():
+                raise
+
+    def _memory_fts_schema_is_current(
+        self,
+        conn: sqlite3.Connection,
+    ) -> bool:
+        table = conn.execute(
+            """
+            SELECT sql FROM sqlite_master
+            WHERE type = 'table' AND name = 'memory_chunks_fts'
+            """
+        ).fetchone()
+        if table is None:
+            return False
+        table_sql = "".join(str(table["sql"]).lower().split())
+        if (
+            "content='memory_chunks'" not in table_sql
+            or "content_rowid='id'" not in table_sql
+        ):
+            return False
+        columns = tuple(
+            row["name"]
+            for row in conn.execute(
+                "PRAGMA table_info(memory_chunks_fts)"
+            ).fetchall()
+        )
+        if columns != ("content", "target", "tags_json"):
+            return False
+        for trigger_name in (
+            "memory_chunks_ai",
+            "memory_chunks_ad",
+            "memory_chunks_au",
+        ):
+            trigger = conn.execute(
                 """
-                CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts
-                USING fts5(content, target, tags, content='memory_chunks', content_rowid='id')
-                """
+                SELECT sql FROM sqlite_master
+                WHERE type = 'trigger' AND name = ?
+                """,
+                (trigger_name,),
+            ).fetchone()
+            if trigger is None:
+                return False
+            normalized_sql = "".join(str(trigger["sql"]).lower().split())
+            if "rowid,content,target,tags_json" not in normalized_sql:
+                return False
+        return True
+
+    def _drop_memory_fts(self, conn: sqlite3.Connection) -> None:
+        for trigger_name in (
+            "memory_chunks_ai",
+            "memory_chunks_ad",
+            "memory_chunks_au",
+        ):
+            conn.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+        conn.execute("DROP TABLE IF EXISTS memory_chunks_fts")
+
+    def _create_memory_fts(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE memory_chunks_fts
+            USING fts5(
+                content,
+                target,
+                tags_json,
+                content='memory_chunks',
+                content_rowid='id'
             )
-            conn.execute(
-                """
-                CREATE TRIGGER IF NOT EXISTS memory_chunks_ai AFTER INSERT ON memory_chunks BEGIN
-                    INSERT INTO memory_chunks_fts(rowid, content, target, tags)
-                    VALUES (new.id, new.content, coalesce(new.target, ''), coalesce(new.tags_json, '[]'));
-                END;
-                """
-            )
-            conn.execute(
-                """
-                CREATE TRIGGER IF NOT EXISTS memory_chunks_ad AFTER DELETE ON memory_chunks BEGIN
-                    INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, content, target, tags)
-                    VALUES ('delete', old.id, old.content, coalesce(old.target, ''), coalesce(old.tags_json, '[]'));
-                END;
-                """
-            )
-            conn.execute(
-                """
-                CREATE TRIGGER IF NOT EXISTS memory_chunks_au AFTER UPDATE ON memory_chunks BEGIN
-                    INSERT INTO memory_chunks_fts(memory_chunks_fts, rowid, content, target, tags)
-                    VALUES ('delete', old.id, old.content, coalesce(old.target, ''), coalesce(old.tags_json, '[]'));
-                    INSERT INTO memory_chunks_fts(rowid, content, target, tags)
-                    VALUES (new.id, new.content, coalesce(new.target, ''), coalesce(new.tags_json, '[]'));
-                END;
-                """
-            )
-            self._rebuild_memory_fts(conn)
-        except sqlite3.OperationalError:
-            pass
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER memory_chunks_ai AFTER INSERT ON memory_chunks BEGIN
+                INSERT INTO memory_chunks_fts(
+                    rowid, content, target, tags_json
+                ) VALUES (
+                    new.id, new.content, coalesce(new.target, ''),
+                    coalesce(new.tags_json, '[]')
+                );
+            END;
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER memory_chunks_ad AFTER DELETE ON memory_chunks BEGIN
+                INSERT INTO memory_chunks_fts(
+                    memory_chunks_fts, rowid, content, target, tags_json
+                ) VALUES (
+                    'delete', old.id, old.content, coalesce(old.target, ''),
+                    coalesce(old.tags_json, '[]')
+                );
+            END;
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER memory_chunks_au AFTER UPDATE ON memory_chunks BEGIN
+                INSERT INTO memory_chunks_fts(
+                    memory_chunks_fts, rowid, content, target, tags_json
+                ) VALUES (
+                    'delete', old.id, old.content, coalesce(old.target, ''),
+                    coalesce(old.tags_json, '[]')
+                );
+                INSERT INTO memory_chunks_fts(
+                    rowid, content, target, tags_json
+                ) VALUES (
+                    new.id, new.content, coalesce(new.target, ''),
+                    coalesce(new.tags_json, '[]')
+                );
+            END;
+            """
+        )
 
     def _rebuild_memory_fts(self, conn: sqlite3.Connection) -> None:
         conn.execute("INSERT INTO memory_chunks_fts(memory_chunks_fts) VALUES ('rebuild')")
+
+    def _check_memory_fts_integrity(
+        self,
+        conn: sqlite3.Connection,
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO memory_chunks_fts(memory_chunks_fts, rank)
+            VALUES ('integrity-check', 1)
+            """
+        )
 
     def _ensure_mission_schema(
         self,
@@ -779,7 +894,10 @@ class StateDB:
                     params.append(session_id)
                 sql += " ORDER BY mc.created_at DESC LIMIT ?"
                 params.append(limit)
-                rows = conn.execute(sql, params).fetchall()
+                try:
+                    rows = conn.execute(sql, params).fetchall()
+                except sqlite3.OperationalError:
+                    rows = []
                 for row in rows:
                     chunk = dict(row)
                     chunk["tags"] = json.loads(chunk.pop("tags_json"))
@@ -788,7 +906,8 @@ class StateDB:
                         if not (chunk_tags & normalized_tags):
                             continue
                     results.append(chunk)
-                return results[:limit]
+                if results:
+                    return results[:limit]
 
             like_query = f"%{query.strip()}%"
             sql = """
@@ -1208,6 +1327,208 @@ class StateDB:
                 """,
                 (time.time(), status, summary, int(run_id)),
             )
+
+    def reconcile_completed_mission_lifecycle(
+        self,
+        *,
+        run_ids: Iterable[int],
+        session_ids: Iterable[int],
+        apply: bool = False,
+    ) -> dict[str, Any]:
+        """Reconcile explicitly named, provably stale completed mission rows."""
+        expected_run_ids = self._normalize_reconciliation_ids(
+            run_ids,
+            "run_ids",
+        )
+        expected_session_ids = self._normalize_reconciliation_ids(
+            session_ids,
+            "session_ids",
+        )
+        run_placeholders = ",".join("?" for _ in expected_run_ids)
+        session_placeholders = ",".join(
+            "?" for _ in expected_session_ids
+        )
+
+        with self._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE" if apply else "BEGIN")
+            rows = conn.execute(
+                f"""
+                SELECT
+                    r.id,
+                    r.mission_id,
+                    r.task_id,
+                    r.session_id,
+                    r.status,
+                    r.finished_at,
+                    r.summary,
+                    m.status AS mission_status,
+                    t.status AS task_status,
+                    s.status AS session_status
+                FROM mission_operator_runs AS r
+                LEFT JOIN missions AS m ON m.id = r.mission_id
+                LEFT JOIN mission_tasks AS t
+                  ON t.id = r.task_id AND t.mission_id = r.mission_id
+                LEFT JOIN sessions AS s ON s.id = r.session_id
+                WHERE r.id IN ({run_placeholders})
+                ORDER BY r.id
+                """,
+                expected_run_ids,
+            ).fetchall()
+            if len(rows) != len(expected_run_ids):
+                raise ValueError(
+                    "every requested operator run must exist exactly once"
+                )
+
+            actual_session_ids = {
+                int(row["session_id"])
+                for row in rows
+                if row["session_id"] is not None
+            }
+            if actual_session_ids != set(expected_session_ids):
+                raise ValueError(
+                    "requested sessions must exactly match the operator runs"
+                )
+
+            session_runs = conn.execute(
+                f"""
+                SELECT id, session_id
+                FROM mission_operator_runs
+                WHERE session_id IN ({session_placeholders})
+                ORDER BY id
+                """,
+                expected_session_ids,
+            ).fetchall()
+            if {int(row["id"]) for row in session_runs} != set(
+                expected_run_ids
+            ):
+                raise ValueError(
+                    "requested sessions contain operator runs outside the "
+                    "explicit run allowlist"
+                )
+
+            stale_run_ids: list[int] = []
+            reconciled_run_ids: list[int] = []
+            running_session_ids: set[int] = set()
+            for row in rows:
+                if row["mission_status"] != "completed":
+                    raise ValueError(
+                        f"run {row['id']} mission is not completed"
+                    )
+                if row["task_status"] != "completed":
+                    raise ValueError(
+                        f"run {row['id']} task is missing or not completed"
+                    )
+                if row["session_status"] not in {"running", "completed"}:
+                    raise ValueError(
+                        f"run {row['id']} session is missing or has an "
+                        "unexpected status"
+                    )
+                if row["session_status"] == "running":
+                    running_session_ids.add(int(row["session_id"]))
+
+                status = str(row["status"])
+                summary = str(row["summary"] or "")
+                if (
+                    status == "running"
+                    and row["finished_at"] is None
+                    and summary == ""
+                ):
+                    stale_run_ids.append(int(row["id"]))
+                    continue
+                if (
+                    status == "completed"
+                    and row["finished_at"] is not None
+                    and summary == MISSION_RECONCILIATION_SUMMARY
+                ):
+                    reconciled_run_ids.append(int(row["id"]))
+                    continue
+                raise ValueError(
+                    f"run {row['id']} does not match the stale or "
+                    "previously reconciled lifecycle state"
+                )
+
+            updated_runs = 0
+            updated_sessions = 0
+            reconciliation_time: float | None = None
+            if apply and stale_run_ids:
+                reconciliation_time = time.time()
+                stale_placeholders = ",".join(
+                    "?" for _ in stale_run_ids
+                )
+                cursor = conn.execute(
+                    f"""
+                    UPDATE mission_operator_runs
+                    SET finished_at = ?, status = 'completed', summary = ?
+                    WHERE id IN ({stale_placeholders})
+                      AND status = 'running'
+                      AND finished_at IS NULL
+                      AND coalesce(summary, '') = ''
+                    """,
+                    (
+                        reconciliation_time,
+                        MISSION_RECONCILIATION_SUMMARY,
+                        *stale_run_ids,
+                    ),
+                )
+                updated_runs = int(cursor.rowcount)
+                if updated_runs != len(stale_run_ids):
+                    raise RuntimeError(
+                        "operator run state changed during reconciliation"
+                    )
+
+            if apply and running_session_ids:
+                running_ids = tuple(sorted(running_session_ids))
+                running_placeholders = ",".join(
+                    "?" for _ in running_ids
+                )
+                cursor = conn.execute(
+                    f"""
+                    UPDATE sessions AS s
+                    SET status = 'completed'
+                    WHERE s.id IN ({running_placeholders})
+                      AND s.status = 'running'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM mission_operator_runs AS r
+                          WHERE r.session_id = s.id
+                            AND (
+                                r.status != 'completed'
+                                OR r.finished_at IS NULL
+                            )
+                      )
+                    """,
+                    running_ids,
+                )
+                updated_sessions = int(cursor.rowcount)
+                if updated_sessions != len(running_ids):
+                    raise RuntimeError(
+                        "session state changed during reconciliation"
+                    )
+
+        return {
+            "applied": bool(apply),
+            "run_ids": list(expected_run_ids),
+            "session_ids": list(expected_session_ids),
+            "stale_runs": len(stale_run_ids),
+            "already_reconciled_runs": len(reconciled_run_ids),
+            "updated_runs": updated_runs,
+            "updated_sessions": updated_sessions,
+            "finished_at": reconciliation_time,
+        }
+
+    def _normalize_reconciliation_ids(
+        self,
+        values: Iterable[int],
+        label: str,
+    ) -> tuple[int, ...]:
+        normalized = tuple(int(value) for value in values)
+        if not normalized:
+            raise ValueError(f"{label} must not be empty")
+        if any(value <= 0 for value in normalized):
+            raise ValueError(f"{label} must contain only positive integers")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError(f"{label} must not contain duplicates")
+        return tuple(sorted(normalized))
 
     def list_mission_evidence_chunks(
         self,

@@ -9,6 +9,226 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 class StateSchemaMigrationTests(unittest.TestCase):
+    def test_v3_memory_fts_column_mismatch_is_rebuilt_without_data_loss(self):
+        from ares.state.db import STATE_SCHEMA_VERSION, StateDB
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.db"
+            conn = sqlite3.connect(path)
+            try:
+                conn.executescript(
+                    """
+                    CREATE TABLE ares_schema_meta (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL
+                    );
+                    INSERT INTO ares_schema_meta VALUES (
+                        'schema_version', '3'
+                    );
+                    CREATE TABLE preserved_state (
+                        id INTEGER PRIMARY KEY,
+                        value TEXT NOT NULL
+                    );
+                    INSERT INTO preserved_state VALUES (1, 'keep me');
+                    CREATE TABLE memory_chunks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id INTEGER,
+                        source_type TEXT NOT NULL,
+                        source_id TEXT,
+                        target TEXT,
+                        tags_json TEXT NOT NULL DEFAULT '[]',
+                        content TEXT NOT NULL,
+                        created_at REAL NOT NULL
+                    );
+                    CREATE VIRTUAL TABLE memory_chunks_fts
+                    USING fts5(
+                        content,
+                        target,
+                        tags,
+                        content='memory_chunks',
+                        content_rowid='id'
+                    );
+                    CREATE TRIGGER memory_chunks_ai
+                    AFTER INSERT ON memory_chunks BEGIN
+                        INSERT INTO memory_chunks_fts(
+                            rowid, content, target, tags
+                        ) VALUES (
+                            new.id,
+                            new.content,
+                            coalesce(new.target, ''),
+                            coalesce(new.tags_json, '[]')
+                        );
+                    END;
+                    CREATE TRIGGER memory_chunks_ad
+                    AFTER DELETE ON memory_chunks BEGIN
+                        INSERT INTO memory_chunks_fts(
+                            memory_chunks_fts,
+                            rowid,
+                            content,
+                            target,
+                            tags
+                        ) VALUES (
+                            'delete',
+                            old.id,
+                            old.content,
+                            coalesce(old.target, ''),
+                            coalesce(old.tags_json, '[]')
+                        );
+                    END;
+                    CREATE TRIGGER memory_chunks_au
+                    AFTER UPDATE ON memory_chunks BEGIN
+                        INSERT INTO memory_chunks_fts(
+                            memory_chunks_fts,
+                            rowid,
+                            content,
+                            target,
+                            tags
+                        ) VALUES (
+                            'delete',
+                            old.id,
+                            old.content,
+                            coalesce(old.target, ''),
+                            coalesce(old.tags_json, '[]')
+                        );
+                        INSERT INTO memory_chunks_fts(
+                            rowid, content, target, tags
+                        ) VALUES (
+                            new.id,
+                            new.content,
+                            coalesce(new.target, ''),
+                            coalesce(new.tags_json, '[]')
+                        );
+                    END;
+                    INSERT INTO memory_chunks VALUES (
+                        1, NULL, 'manual', 'one', '127.0.0.1',
+                        '["legacy"]', 'shared marker alpha', 1.0
+                    );
+                    INSERT INTO memory_chunks VALUES (
+                        2, NULL, 'manual', 'two', '127.0.0.1',
+                        '["legacy"]', 'shared marker bravo', 2.0
+                    );
+                    INSERT INTO memory_chunks VALUES (
+                        3, NULL, 'manual', 'three', '127.0.0.1',
+                        '["legacy"]', 'shared marker charlie', 3.0
+                    );
+                    INSERT INTO memory_chunks_fts(memory_chunks_fts)
+                    VALUES ('delete-all');
+                    INSERT INTO memory_chunks_fts(
+                        rowid, content, target, tags
+                    )
+                    SELECT id, content, target, tags_json
+                    FROM memory_chunks WHERE id = 3;
+                    """
+                )
+                conn.commit()
+                with self.assertRaises(sqlite3.DatabaseError):
+                    conn.execute(
+                        """
+                        INSERT INTO memory_chunks_fts(
+                            memory_chunks_fts, rank
+                        ) VALUES ('integrity-check', 1)
+                        """
+                    )
+            finally:
+                conn.close()
+
+            db = StateDB(path)
+
+            self.assertEqual(db.schema_version(), STATE_SCHEMA_VERSION)
+            self.assertEqual(
+                [row["id"] for row in db.search_memory_chunks(
+                    query="shared",
+                    target="127.0.0.1",
+                    limit=10,
+                )],
+                [3, 2, 1],
+            )
+            with db._connection() as check:
+                columns = [
+                    row["name"]
+                    for row in check.execute(
+                        "PRAGMA table_info(memory_chunks_fts)"
+                    ).fetchall()
+                ]
+                self.assertEqual(
+                    columns,
+                    ["content", "target", "tags_json"],
+                )
+                trigger_sql = " ".join(
+                    row["sql"]
+                    for row in check.execute(
+                        """
+                        SELECT sql FROM sqlite_master
+                        WHERE type = 'trigger'
+                          AND name LIKE 'memory_chunks_a%'
+                        ORDER BY name
+                        """
+                    ).fetchall()
+                )
+                self.assertIn("target, tags_json", trigger_sql)
+                check.execute(
+                    """
+                    INSERT INTO memory_chunks_fts(
+                        memory_chunks_fts, rank
+                    ) VALUES ('integrity-check', 1)
+                    """
+                )
+                self.assertEqual(
+                    check.execute(
+                        "SELECT value FROM preserved_state WHERE id = 1"
+                    ).fetchone()["value"],
+                    "keep me",
+                )
+                check.execute("DELETE FROM memory_chunks WHERE id = 1")
+                check.execute(
+                    """
+                    UPDATE memory_chunks
+                    SET content = 'replacement delta',
+                        tags_json = '["updated"]'
+                    WHERE id = 2
+                    """
+                )
+
+            self.assertEqual(
+                [row["id"] for row in db.search_memory_chunks(
+                    query="shared",
+                    limit=10,
+                )],
+                [3],
+            )
+            updated = db.search_memory_chunks(
+                query="replacement",
+                limit=10,
+            )
+            self.assertEqual([row["id"] for row in updated], [2])
+            self.assertEqual(updated[0]["tags"], ["updated"])
+
+            reopened = StateDB(path)
+            with reopened._connection() as check:
+                check.execute(
+                    """
+                    INSERT INTO memory_chunks_fts(
+                        memory_chunks_fts, rank
+                    ) VALUES ('integrity-check', 1)
+                    """
+                )
+                self.assertEqual(
+                    check.execute(
+                        "SELECT count(*) FROM memory_chunks_fts"
+                    ).fetchone()[0],
+                    check.execute(
+                        "SELECT count(*) FROM memory_chunks"
+                    ).fetchone()[0],
+                )
+                self.assertEqual(
+                    check.execute("PRAGMA quick_check").fetchone()[0],
+                    "ok",
+                )
+                self.assertEqual(
+                    check.execute("PRAGMA integrity_check").fetchone()[0],
+                    "ok",
+                )
+
     def test_v2_mission_data_migrates_to_explicit_lifecycle(self):
         from ares.state.db import STATE_SCHEMA_VERSION, StateDB
 
